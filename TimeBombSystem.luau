@@ -223,17 +223,13 @@ local function restoreJump(player)
 	savedMovement[player] = nil
 end
 
-local function storeTools(player)
-	local folder = getStoredFolder(player, true)
-	local backpack = player:FindFirstChildOfClass("Backpack")
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-	if humanoid then
+local function storeTools(player, folder, keepEquipped)
+	local humanoid = getHumanoid(player)
+	if humanoid and not keepEquipped then
 		humanoid:UnequipTools()
 	end
 
-	for _, container in ipairs({backpack, character}) do
+	for _, container in ipairs({player:FindFirstChildOfClass("Backpack"), player.Character}) do
 		if container then
 			for _, item in ipairs(container:GetChildren()) do
 				if item:IsA("Tool") and item ~= activeBomb then
@@ -246,17 +242,8 @@ end
 
 local function storeNewTools(player)
 	local folder = storedFolders[player]
-	if not folder then
-		return
-	end
-	for _, container in ipairs({player:FindFirstChildOfClass("Backpack"), player.Character}) do
-		if container then
-			for _, item in ipairs(container:GetChildren()) do
-				if item:IsA("Tool") and item ~= activeBomb then
-					item.Parent = folder
-				end
-			end
-		end
+	if folder then
+		storeTools(player, folder, true)
 	end
 end
 
@@ -327,7 +314,8 @@ local function stopFlyingCarpet(player, character)
 	end
 	local clientControl = carpet:FindFirstChild("ClientControl")
 	if clientControl and clientControl:IsA("RemoteFunction") then
-		pcall(function()
+		-- InvokeClient never returns if the client stalls; keep it off the main loop
+		task.spawn(pcall, function()
 			clientControl:InvokeClient(player, "StopFlight")
 		end)
 	end
@@ -384,16 +372,7 @@ local function enterZone(player)
 		end
 	end
 
-	for _, item in ipairs(backpack:GetChildren()) do
-		if item:IsA("Tool") and item ~= activeBomb then
-			item.Parent = folder
-		end
-	end
-	for _, item in ipairs(character:GetChildren()) do
-		if item:IsA("Tool") and item ~= activeBomb then
-			item.Parent = folder
-		end
-	end
+	storeTools(player, folder, true)
 
 	startToolGuard(player)
 	restrictJump(player)
@@ -407,7 +386,11 @@ local function clearBomb()
 	holder = nil
 	blockedReturnTarget = nil
 	blockedReturnUntil = 0
+	local thread = roundThread
 	roundThread = nil
+	if thread and thread ~= coroutine.running() and coroutine.status(thread) == "suspended" then
+		task.cancel(thread)
+	end
 end
 
 local function endRound(forRoundId, message)
@@ -422,9 +405,9 @@ local function endRound(forRoundId, message)
 	phase = "Intermission"
 	phaseEndsAt = os.clock() + INTERMISSION_DURATION
 	if winner then
-		intermissionMessage = (message or "Раунд окончен") .. " • Победитель: " .. winner.DisplayName
+		intermissionMessage = (message or "Р Р°СѓРЅРґ РѕРєРѕРЅС‡РµРЅ") .. " вЂў РџРѕР±РµРґРёС‚РµР»СЊ: " .. winner.DisplayName
 	else
-		intermissionMessage = message or "Раунд окончен"
+		intermissionMessage = message or "Р Р°СѓРЅРґ РѕРєРѕРЅС‡РµРЅ"
 	end
 	setStatus(intermissionMessage, Color3.fromRGB(255, 225, 120), true)
 	return true
@@ -508,7 +491,7 @@ local function explodeHolder(forRoundId, reason)
 		end
 	end
 
-	endRound(forRoundId, reason or "Бомба взорвалась")
+	endRound(forRoundId, reason or "Р‘РѕРјР±Р° РІР·РѕСЂРІР°Р»Р°СЃСЊ")
 end
 
 local function equipBomb(player, bomb)
@@ -531,17 +514,17 @@ local function enforceBombHolder(forRoundId)
 	local humanoid = getHumanoid(holder)
 	if not humanoid or humanoid.Health <= 0 then
 		roundParticipants[holder] = nil
-		endRound(forRoundId, "Носитель выбыл")
+		endRound(forRoundId, "РќРѕСЃРёС‚РµР»СЊ РІС‹Р±С‹Р»")
 		return false
 	end
 	if not inside[holder] then
-		explodeHolder(forRoundId, "Носитель вышел из зоны")
+		explodeHolder(forRoundId, "РќРѕСЃРёС‚РµР»СЊ РІС‹С€РµР» РёР· Р·РѕРЅС‹")
 		return false
 	end
 
 	if activeBomb.Parent ~= holder.Character then
 		if not equipBomb(holder, activeBomb) then
-			explodeHolder(forRoundId, "Бомба потеряна")
+			explodeHolder(forRoundId, "Р‘РѕРјР±Р° РїРѕС‚РµСЂСЏРЅР°")
 			return false
 		end
 	end
@@ -551,7 +534,7 @@ local function enforceBombHolder(forRoundId)
 	if handle and root and (handle.Position - root.Position).Magnitude > MAX_BOMB_FROM_HOLDER then
 		activeBomb.Parent = holder:FindFirstChildOfClass("Backpack")
 		if not equipBomb(holder, activeBomb) then
-			explodeHolder(forRoundId, "Бомба потеряна")
+			explodeHolder(forRoundId, "Р‘РѕРјР±Р° РїРѕС‚РµСЂСЏРЅР°")
 			return false
 		end
 	end
@@ -688,14 +671,23 @@ local function beginRound(candidates)
 		roundParticipants[player] = true
 	end
 
+	local bomb = bombTemplate:Clone()
+	local handle = bomb:FindFirstChild("Handle")
+	local hitbox = bomb:FindFirstChild("Hitbox")
+	if not handle or not hitbox then
+		warn("TimeBomb template is missing Handle or Hitbox")
+		bomb:Destroy()
+		roundParticipants = {}
+		phase = "Waiting"
+		return
+	end
+
 	holder = valid[math.random(1, #valid)]
-	activeBomb = bombTemplate:Clone()
+	activeBomb = bomb
 	activeBomb.Name = "TimeBomb"
 	activeBomb.CanBeDropped = false
 	activeBomb:SetAttribute("TimeBombActive", true)
 
-	local handle = activeBomb:WaitForChild("Handle")
-	local hitbox = activeBomb:WaitForChild("Hitbox")
 	hitbox.CanCollide = false
 	hitbox.CanTouch = false
 	hitbox.CanQuery = false
@@ -733,57 +725,67 @@ local function beginRound(candidates)
 	end)
 
 	if not equipBomb(holder, activeBomb) then
-		endRound(myRound, "Раунд отменён")
+		endRound(myRound, "Р Р°СѓРЅРґ РѕС‚РјРµРЅС‘РЅ")
 		return
 	end
 
-	roundThread = task.spawn(function()
-		local deadline = os.clock() + ROUND_DURATION
-		local nextTickAt = 0
-		local nextPassScan = 0
-		local nextEnforce = 0
+	local thread = task.spawn(function()
+		local ok, err = pcall(function()
+			local deadline = os.clock() + ROUND_DURATION
+			local nextTickAt = 0
+			local nextPassScan = 0
+			local nextEnforce = 0
 
-		while myRound == roundId and phase == "Active" and activeBomb and holder do
-			local now = os.clock()
-			local remainingExact = math.max(0, deadline - now)
-			local remaining = math.ceil(remainingExact)
-			label.Text = tostring(remaining)
+			while myRound == roundId and phase == "Active" and activeBomb and holder do
+				local now = os.clock()
+				local remainingExact = math.max(0, deadline - now)
+				local remaining = math.ceil(remainingExact)
+				label.Text = tostring(remaining)
 
-			if remaining <= 5 then
-				label.TextColor3 = Color3.fromRGB(255, 65, 65)
-				label.Visible = math.floor(now * 5) % 2 == 0
-			else
-				label.TextColor3 = Color3.new(1, 1, 1)
-				label.Visible = true
-			end
+				if remaining <= 5 then
+					label.TextColor3 = Color3.fromRGB(255, 65, 65)
+					label.Visible = math.floor(now * 5) % 2 == 0
+				else
+					label.TextColor3 = Color3.new(1, 1, 1)
+					label.Visible = true
+				end
 
-			if remaining > 0 and now >= nextTickAt then
-				local progress = math.clamp(1 - remainingExact / ROUND_DURATION, 0, 1)
-				local urgency = progress * progress
-				tickSound.PlaybackSpeed = 1 + progress * 1.05
-				tickSound:Play()
-				nextTickAt = now + math.max(0.16, 1 - urgency * 0.84)
-			end
+				if remaining > 0 and now >= nextTickAt then
+					local progress = math.clamp(1 - remainingExact / ROUND_DURATION, 0, 1)
+					local urgency = progress * progress
+					tickSound.PlaybackSpeed = 1 + progress * 1.05
+					tickSound:Play()
+					nextTickAt = now + math.max(0.16, 1 - urgency * 0.84)
+				end
 
-			if now >= nextPassScan then
-				nextPassScan = now + PASS_SCAN_INTERVAL
-				scanForPassTarget(myRound)
-			end
+				if now >= nextPassScan then
+					nextPassScan = now + PASS_SCAN_INTERVAL
+					scanForPassTarget(myRound)
+				end
 
-			if now >= nextEnforce then
-				nextEnforce = now + PASS_SCAN_INTERVAL
-				if not enforceBombHolder(myRound) then
+				if now >= nextEnforce then
+					nextEnforce = now + PASS_SCAN_INTERVAL
+					if not enforceBombHolder(myRound) then
+						break
+					end
+				end
+
+				if remainingExact <= 0 then
+					explodeHolder(myRound, "Р‘РѕРјР±Р° РІР·РѕСЂРІР°Р»Р°СЃСЊ")
 					break
 				end
+				task.wait(0.03)
 			end
 
-			if remainingExact <= 0 then
-				explodeHolder(myRound, "Бомба взорвалась")
-				break
-			end
-			task.wait(0.03)
+		end)
+		if not ok then
+			warn("TimeBomb round error: " .. tostring(err))
+			endRound(myRound, "Р Р°СѓРЅРґ РїСЂРµСЂРІР°РЅ")
 		end
 	end)
+	if myRound == roundId and phase == "Active" then
+		roundThread = thread
+	end
 end
 
 local function eliminateLeaver(player)
@@ -804,14 +806,14 @@ local function handleParticipantExit(player)
 	end
 
 	if player == holder then
-		explodeHolder(roundId, "Носитель вышел из зоны")
+		explodeHolder(roundId, "РќРѕСЃРёС‚РµР»СЊ РІС‹С€РµР» РёР· Р·РѕРЅС‹")
 		return
 	end
 
 	roundParticipants[player] = nil
 	eliminateLeaver(player)
 	if getActiveParticipantCount() < MIN_PLAYERS then
-		endRound(roundId, "Соперник покинул зону")
+		endRound(roundId, "РЎРѕРїРµСЂРЅРёРє РїРѕРєРёРЅСѓР» Р·РѕРЅСѓ")
 	end
 end
 
@@ -830,20 +832,21 @@ local function handleRoundDeath(player)
 	roundParticipants[player] = nil
 	eliminatedUntil[player] = os.clock() + ELIMINATION_LOCK
 	if player == holder then
-		endRound(roundId, "Носитель погиб")
+		endRound(roundId, "РќРѕСЃРёС‚РµР»СЊ РїРѕРіРёР±")
 	elseif getActiveParticipantCount() < MIN_PLAYERS then
-		endRound(roundId, "Раунд окончен")
+		endRound(roundId, "Р Р°СѓРЅРґ РѕРєРѕРЅС‡РµРЅ")
 	end
 end
 
 local function onCharacterAdded(player, character)
 	local humanoid = character:WaitForChild("Humanoid", 10)
-	if not humanoid then
+	if not humanoid or player.Parent ~= Players or player.Character ~= character then
 		return
 	end
 
 	inside[player] = nil
 	outsideSince[player] = nil
+	stopToolGuard(player)
 
 	humanoid.Died:Connect(function()
 		handleRoundDeath(player)
@@ -875,9 +878,9 @@ Players.PlayerRemoving:Connect(function(player)
 	if phase == "Active" and roundParticipants[player] then
 		roundParticipants[player] = nil
 		if player == holder then
-			endRound(roundId, "Игрок покинул сервер")
+			endRound(roundId, "РРіСЂРѕРє РїРѕРєРёРЅСѓР» СЃРµСЂРІРµСЂ")
 		elseif getActiveParticipantCount() < MIN_PLAYERS then
-			endRound(roundId, "Игрок покинул сервер")
+			endRound(roundId, "РРіСЂРѕРє РїРѕРєРёРЅСѓР» СЃРµСЂРІРµСЂ")
 		end
 	end
 	inside[player] = nil
@@ -885,16 +888,23 @@ Players.PlayerRemoving:Connect(function(player)
 	eliminatedUntil[player] = nil
 	pendingRestore[player] = nil
 	stopToolGuard(player)
-	restoreJump(player)
+	local connection = jumpConnections[player]
+	if connection then
+		connection:Disconnect()
+	end
+	jumpConnections[player] = nil
 	local folder = storedFolders[player]
 	if folder then
 		folder:Destroy()
 	end
 	storedFolders[player] = nil
 	savedMovement[player] = nil
+	if blockedReturnTarget == player then
+		blockedReturnTarget = nil
+	end
 end)
 
-while true do
+local function step()
 	local now = os.clock()
 	local current = {}
 
@@ -931,9 +941,9 @@ while true do
 		if #candidates >= MIN_PLAYERS then
 			phase = "Countdown"
 			phaseEndsAt = now + LOBBY_COUNTDOWN
-			setStatus("Подготовка к раунду", Color3.new(1, 1, 1), true)
+			setStatus("РџРѕРґРіРѕС‚РѕРІРєР° Рє СЂР°СѓРЅРґСѓ", Color3.new(1, 1, 1), true)
 		elseif #candidates >= 1 then
-			setStatus("Требуется ещё " .. (MIN_PLAYERS - #candidates) .. " игрок(ов)", Color3.new(1, 1, 1), true)
+			setStatus("РўСЂРµР±СѓРµС‚СЃСЏ РµС‰С‘ " .. (MIN_PLAYERS - #candidates) .. " РёРіСЂРѕРє(РѕРІ)", Color3.new(1, 1, 1), true)
 		else
 			setStatus("", Color3.new(1, 1, 1), false)
 		end
@@ -941,10 +951,10 @@ while true do
 		local candidates = getEligiblePlayers()
 		if #candidates < MIN_PLAYERS then
 			phase = "Waiting"
-			setStatus("Требуется ещё " .. (MIN_PLAYERS - #candidates) .. " игрок(ов)", Color3.new(1, 1, 1), #candidates >= 1)
+			setStatus("РўСЂРµР±СѓРµС‚СЃСЏ РµС‰С‘ " .. (MIN_PLAYERS - #candidates) .. " РёРіСЂРѕРє(РѕРІ)", Color3.new(1, 1, 1), #candidates >= 1)
 		else
 			local remaining = math.max(1, math.ceil(phaseEndsAt - now))
-			setStatus("Старт через " .. remaining, Color3.fromRGB(255, 235, 150), true)
+			setStatus("РЎС‚Р°СЂС‚ С‡РµСЂРµР· " .. remaining, Color3.fromRGB(255, 235, 150), true)
 			if now >= phaseEndsAt then
 				beginRound(candidates)
 			end
@@ -952,17 +962,34 @@ while true do
 	elseif phase == "Intermission" then
 		local remaining = math.max(0, math.ceil(phaseEndsAt - now))
 		if remaining > 0 then
-			setStatus(intermissionMessage .. " • новый раунд через " .. remaining, Color3.fromRGB(255, 225, 120), true)
+			setStatus(intermissionMessage .. " вЂў РЅРѕРІС‹Р№ СЂР°СѓРЅРґ С‡РµСЂРµР· " .. remaining, Color3.fromRGB(255, 225, 120), true)
 		else
 			phase = "Waiting"
 			intermissionMessage = ""
 		end
 	end
 
-	if phase == "Active" then
-		local participants = getActiveParticipantCount()
-		setStatus("Раунд идёт • игроков: " .. participants, Color3.fromRGB(255, 120, 120), true)
+	if phase == "Active" and (not activeBomb or not holder) then
+		endRound(roundId, "Р Р°СѓРЅРґ РѕРєРѕРЅС‡РµРЅ")
 	end
 
+	for player in pairs(pendingRestore) do
+		if not inside[player] then
+			restoreTools(player)
+		end
+	end
+
+	if phase == "Active" then
+		local participants = getActiveParticipantCount()
+		setStatus("Р Р°СѓРЅРґ РёРґС‘С‚ вЂў РёРіСЂРѕРєРѕРІ: " .. participants, Color3.fromRGB(255, 120, 120), true)
+	end
+
+end
+
+while true do
+	local ok, err = pcall(step)
+	if not ok then
+		warn("TimeBomb loop error: " .. tostring(err))
+	end
 	task.wait(ZONE_CHECK_INTERVAL)
 end

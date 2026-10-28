@@ -1,9 +1,9 @@
 --=====================================================================
---  CharacterCollisionService — игроки не сталкиваются друг с другом.
---  Группу выдаёт общий модуль Shared.CollisionGroups. Раньше этот скрипт
---  на каждый DescendantAdded безусловно перезаписывал CollisionGroup,
---  из-за чего части тела и коллайдеры рагдолла мгновенно теряли свою
---  группу и правила "рагдолл против рагдолла" не работали.
+--  CharacterCollisionService вЂ” РёРіСЂРѕРєРё РЅРµ СЃС‚Р°Р»РєРёРІР°СЋС‚СЃСЏ РґСЂСѓРі СЃ РґСЂСѓРіРѕРј.
+--  Р“СЂСѓРїРїСѓ РІС‹РґР°С‘С‚ РѕР±С‰РёР№ РјРѕРґСѓР»СЊ Shared.CollisionGroups. Р Р°РЅСЊС€Рµ СЌС‚РѕС‚ СЃРєСЂРёРїС‚
+--  РЅР° РєР°Р¶РґС‹Р№ DescendantAdded Р±РµР·СѓСЃР»РѕРІРЅРѕ РїРµСЂРµР·Р°РїРёСЃС‹РІР°Р» CollisionGroup,
+--  РёР·-Р·Р° С‡РµРіРѕ С‡Р°СЃС‚Рё С‚РµР»Р° Рё РєРѕР»Р»Р°Р№РґРµСЂС‹ СЂР°РіРґРѕР»Р»Р° РјРіРЅРѕРІРµРЅРЅРѕ С‚РµСЂСЏР»Рё СЃРІРѕСЋ
+--  РіСЂСѓРїРїСѓ Рё РїСЂР°РІРёР»Р° "СЂР°РіРґРѕР»Р» РїСЂРѕС‚РёРІ СЂР°РіРґРѕР»Р»Р°" РЅРµ СЂР°Р±РѕС‚Р°Р»Рё.
 --=====================================================================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,7 +11,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local CollisionGroups = require(Shared:WaitForChild("CollisionGroups"))
 
--- Метка владельца: пока она стоит, чужая подсистема группу не сменит.
+-- РњРµС‚РєР° РІР»Р°РґРµР»СЊС†Р°: РїРѕРєР° РѕРЅР° СЃС‚РѕРёС‚, С‡СѓР¶Р°СЏ РїРѕРґСЃРёСЃС‚РµРјР° РіСЂСѓРїРїСѓ РЅРµ СЃРјРµРЅРёС‚.
 local OWNER = "Character"
 
 CollisionGroups.setup()
@@ -20,7 +20,7 @@ local connections = {}
 
 local function applyPart(instance)
 	if instance:IsA("BasePart") then
-		-- apply() сам откажется, если частью сейчас владеет рагдолл.
+		-- apply() СЃР°Рј РѕС‚РєР°Р¶РµС‚СЃСЏ, РµСЃР»Рё С‡Р°СЃС‚СЊСЋ СЃРµР№С‡Р°СЃ РІР»Р°РґРµРµС‚ СЂР°РіРґРѕР»Р».
 		CollisionGroups.apply(instance, CollisionGroups.Character, OWNER)
 	end
 end

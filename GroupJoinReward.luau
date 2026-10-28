@@ -19,16 +19,22 @@ if not result then
 	result.Parent = ReplicatedStorage
 end
 
+local REQUEST_COOLDOWN = 5
+
 local inFlight = {}
+local lastRequestAt = {}
 
 local function isMember(player, useFreshGroupQuery)
 	if useFreshGroupQuery then
-		-- Этот запрос не использовался при первом входе, поэтому после PromptJoinAsync
-		-- он даёт свежую проверку и не полагается на старый кэш Player:IsInGroupAsync.
+		-- Р­С‚РѕС‚ Р·Р°РїСЂРѕСЃ РЅРµ РёСЃРїРѕР»СЊР·РѕРІР°Р»СЃСЏ РїСЂРё РїРµСЂРІРѕРј РІС…РѕРґРµ, РїРѕСЌС‚РѕРјСѓ РїРѕСЃР»Рµ PromptJoinAsync
+		-- РѕРЅ РґР°С‘С‚ СЃРІРµР¶СѓСЋ РїСЂРѕРІРµСЂРєСѓ Рё РЅРµ РїРѕР»Р°РіР°РµС‚СЃСЏ РЅР° СЃС‚Р°СЂС‹Р№ РєСЌС€ Player:IsInGroupAsync.
 		local ok, roles = pcall(function()
 			return GroupService:GetRolesInGroupAsync(player.UserId, GROUP_ID)
 		end)
-		return ok and type(roles) == "table" and roles.IsMember == true
+		if ok and type(roles) == "table" then
+			return roles.IsMember == true
+		end
+		-- GetRolesInGroupAsync Р±С‹РІР°РµС‚ РѕС‚РєР»СЋС‡С‘РЅ/РЅРµРґРѕСЃС‚СѓРїРµРЅ вЂ” С‚РѕРіРґР° РїСЂРѕРІРµСЂСЏРµРј РѕР±С‹С‡РЅС‹Рј СЃРїРѕСЃРѕР±РѕРј.
 	end
 	local ok, member = pcall(function()
 		return player:IsInGroupAsync(GROUP_ID)
@@ -41,8 +47,9 @@ local function claimReward(player)
 	local coinsApi = shopServer and shopServer:FindFirstChild("AdminCoins")
 	if not coinsApi then return false end
 
-	-- Профиль монет может ещё загружаться в первые секунды входа.
+	-- РџСЂРѕС„РёР»СЊ РјРѕРЅРµС‚ РјРѕР¶РµС‚ РµС‰С‘ Р·Р°РіСЂСѓР¶Р°С‚СЊСЃСЏ РІ РїРµСЂРІС‹Рµ СЃРµРєСѓРЅРґС‹ РІС…РѕРґР°.
 	for _ = 1, 10 do
+		if player.Parent ~= Players then return false end
 		local ok, success, status = pcall(coinsApi.Invoke, coinsApi, "claimGroupJoinReward", player, REWARD_COINS)
 		if ok and success then
 			return status == "claimed"
@@ -63,16 +70,19 @@ local function checkInitialMembership(player)
 	player:SetAttribute("ICEGroupCheckFinished", true)
 
 	if member then
-		-- Уже состоящим в группе окно не показываем; награда всё равно только одна.
+		-- РЈР¶Рµ СЃРѕСЃС‚РѕСЏС‰РёРј РІ РіСЂСѓРїРїРµ РѕРєРЅРѕ РЅРµ РїРѕРєР°Р·С‹РІР°РµРј; РЅР°РіСЂР°РґР° РІСЃС‘ СЂР°РІРЅРѕ С‚РѕР»СЊРєРѕ РѕРґРЅР°.
 		claimReward(player)
 	end
 end
 
 request.OnServerEvent:Connect(function(player)
 	if inFlight[player] then return end
+	local now = os.clock()
+	if now - (lastRequestAt[player] or -math.huge) < REQUEST_COOLDOWN then return end
+	lastRequestAt[player] = now
 	inFlight[player] = true
 
-	-- После нативного окна Roblox даём сервисам короткое время обновить членство.
+	-- РџРѕСЃР»Рµ РЅР°С‚РёРІРЅРѕРіРѕ РѕРєРЅР° Roblox РґР°С‘Рј СЃРµСЂРІРёСЃР°Рј РєРѕСЂРѕС‚РєРѕРµ РІСЂРµРјСЏ РѕР±РЅРѕРІРёС‚СЊ С‡Р»РµРЅСЃС‚РІРѕ.
 	task.wait(2)
 	local member = isMember(player, true)
 	if player.Parent ~= Players then
@@ -96,4 +106,5 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	inFlight[player] = nil
+	lastRequestAt[player] = nil
 end)

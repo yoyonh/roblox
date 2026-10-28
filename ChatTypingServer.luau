@@ -8,48 +8,70 @@ if not event then
 	event.Parent = ReplicatedStorage
 end
 
-local states = {}
-local lastRequests = {}
-local REQUEST_COOLDOWN = 0.12
+local MAX_REQUESTS_PER_WINDOW = 10
+local RATE_WINDOW = 1
 local STALE_TIMEOUT = 8
+
+local typingSince = {}
+local rateLimits = {}
+
+-- Скользящее окно вместо жёсткого кулдауна: быстрое "начал/закончил"
+-- проходит, а флуд отбрасывается.
+local function allowRequest(player, now)
+	local limit = rateLimits[player]
+	if not limit or now - limit.windowStart >= RATE_WINDOW then
+		rateLimits[player] = { windowStart = now, count = 1 }
+		return true
+	end
+	if limit.count >= MAX_REQUESTS_PER_WINDOW then
+		return false
+	end
+	limit.count += 1
+	return true
+end
+
+local function broadcast(player, isTyping)
+	event:FireAllClients(player.UserId, player.Name, isTyping)
+end
 
 event.OnServerEvent:Connect(function(player, isTyping)
 	if type(isTyping) ~= "boolean" then
 		return
 	end
 	local now = os.clock()
-	if now - (lastRequests[player] or 0) < REQUEST_COOLDOWN then
+	if not allowRequest(player, now) then
 		return
 	end
-	lastRequests[player] = now
 
-	local state = states[player]
+	local wasTyping = typingSince[player] ~= nil
 	if isTyping then
-		states[player] = { typing = true, updatedAt = now }
-	elseif state then
-		states[player] = nil
+		typingSince[player] = now
+	else
+		typingSince[player] = nil
 	end
-	event:FireAllClients(player.UserId, player.Name, isTyping)
+	if wasTyping ~= isTyping then
+		broadcast(player, isTyping)
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	if states[player] then
-		event:FireAllClients(player.UserId, player.Name, false)
+	if typingSince[player] then
+		broadcast(player, false)
 	end
-	states[player] = nil
-	lastRequests[player] = nil
+	typingSince[player] = nil
+	rateLimits[player] = nil
 end)
 
 task.spawn(function()
 	while true do
 		task.wait(2)
 		local now = os.clock()
-		for player, state in pairs(states) do
-			if player.Parent ~= Players or now - state.updatedAt > STALE_TIMEOUT then
-				states[player] = nil
-				if player.Parent == Players then
-					event:FireAllClients(player.UserId, player.Name, false)
-				end
+		for player, updatedAt in pairs(typingSince) do
+			if player.Parent ~= Players then
+				typingSince[player] = nil
+			elseif now - updatedAt > STALE_TIMEOUT then
+				typingSince[player] = nil
+				broadcast(player, false)
 			end
 		end
 	end

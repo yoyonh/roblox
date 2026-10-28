@@ -1,7 +1,7 @@
 --=====================================================================
---  RagdollSystem — точка входа. Вся логика живёт в
---  ServerScriptService.Systems.RagdollService, чтобы другие системы
---  подключались через require(), а не через _G и BindableFunction.
+--  RagdollSystem вЂ” С‚РѕС‡РєР° РІС…РѕРґР°. Р’СЃСЏ Р»РѕРіРёРєР° Р¶РёРІС‘С‚ РІ
+--  ServerScriptService.Systems.RagdollService, С‡С‚РѕР±С‹ РґСЂСѓРіРёРµ СЃРёСЃС‚РµРјС‹
+--  РїРѕРґРєР»СЋС‡Р°Р»РёСЃСЊ С‡РµСЂРµР· require(), Р° РЅРµ С‡РµСЂРµР· _G Рё BindableFunction.
 --=====================================================================
 local RagdollService = require(script.Parent.Systems.RagdollService)
 

@@ -5,7 +5,7 @@ local MIN_ACCOUNT_AGE_DAYS = 1
 local function validatePlayer(player)
 	if player.AccountAge < MIN_ACCOUNT_AGE_DAYS then
 		player:Kick(string.format(
-			"Äëÿ âõîäà àêêàóíòó äîëæíî áûòü íå ìåíüøå %d äíåé. Âîçðàñò âàøåãî àêêàóíòà: %d äí.",
+			"Ð”Ð»Ñ Ð²Ñ…Ð¾Ð´Ð° Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚Ñƒ Ð´Ð¾Ð»Ð¶Ð½Ð¾ Ð±Ñ‹Ñ‚ÑŒ Ð½Ðµ Ð¼ÐµÐ½ÑŒÑˆÐµ %d Ð´Ð½. Ð’Ð¾Ð·Ñ€Ð°ÑÑ‚ Ð²Ð°ÑˆÐµÐ³Ð¾ Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚Ð°: %d Ð´Ð½.",
 			MIN_ACCOUNT_AGE_DAYS,
 			math.max(0, player.AccountAge)
 		))
