@@ -3,8 +3,27 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
 local RunService = game:GetService("RunService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 ReplicatedFirst:RemoveDefaultLoadingScreen()
+
+local CONFIG = {
+	Title = nil, -- nil = use the experience's name
+	BackgroundTop = Color3.fromRGB(18, 14, 40),
+	BackgroundBottom = Color3.fromRGB(4, 4, 12),
+	AccentA = Color3.fromRGB(120, 90, 255),
+	AccentB = Color3.fromRGB(0, 210, 255),
+	StarCount = 60,
+	DotCount = 5,
+	TipInterval = 4,
+	Tips = {
+		"Tip: Explore every corner — secrets are hidden everywhere.",
+		"Tip: Team up with friends to progress faster.",
+		"Tip: Check the settings menu to customise your controls.",
+		"Tip: Take a break every now and then!",
+		"Tip: Be kind to other players.",
+	},
+}
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -17,124 +36,296 @@ screenGui.DisplayOrder = 1000
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = playerGui
 
-local background = Instance.new("Frame")
+-- A CanvasGroup lets the whole screen fade out with one tween.
+local background = Instance.new("CanvasGroup")
 background.Name = "Background"
 background.Size = UDim2.fromScale(1, 1)
-background.Position = UDim2.fromScale(0, 0)
-background.BackgroundColor3 = Color3.new(0, 0, 0)
+background.BackgroundColor3 = Color3.new(1, 1, 1)
 background.BorderSizePixel = 0
-background.ZIndex = 1
 background.Parent = screenGui
+
+local bgGradient = Instance.new("UIGradient")
+bgGradient.Color = ColorSequence.new(CONFIG.BackgroundTop, CONFIG.BackgroundBottom)
+bgGradient.Rotation = 90
+bgGradient.Parent = background
+
+local uiScale = Instance.new("UIScale")
+uiScale.Parent = background
+
+-- Starfield
+local starsHolder = Instance.new("Frame")
+starsHolder.Name = "Stars"
+starsHolder.Size = UDim2.fromScale(1, 1)
+starsHolder.BackgroundTransparency = 1
+starsHolder.Parent = background
+
+local stars = {}
+for i = 1, CONFIG.StarCount do
+	local size = math.random(2, 4)
+	local star = Instance.new("Frame")
+	star.Name = "Star" .. i
+	star.Size = UDim2.fromOffset(size, size)
+	star.AnchorPoint = Vector2.new(0.5, 0.5)
+	star.BackgroundColor3 = Color3.new(1, 1, 1)
+	star.BorderSizePixel = 0
+	star.Parent = starsHolder
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = star
+
+	stars[i] = {
+		frame = star,
+		x = math.random(),
+		y = math.random(),
+		speed = 0.01 + math.random() * 0.03 * (size / 2),
+		phase = math.random() * math.pi * 2,
+		twinkle = 1 + math.random() * 2,
+	}
+end
+
+-- Center content
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.fromOffset(460, 260)
+content.AnchorPoint = Vector2.new(0.5, 0.5)
+content.Position = UDim2.fromScale(0.5, 0.45)
+content.BackgroundTransparency = 1
+content.Parent = background
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "Title"
+titleLabel.Size = UDim2.new(1, 0, 0, 56)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Font = Enum.Font.GothamBlack
+titleLabel.Text = CONFIG.Title or ""
+titleLabel.TextColor3 = Color3.new(1, 1, 1)
+titleLabel.TextScaled = true
+titleLabel.Parent = content
+
+local titleSizeLimit = Instance.new("UITextSizeConstraint")
+titleSizeLimit.MaxTextSize = 44
+titleSizeLimit.Parent = titleLabel
+
+local titleGradient = Instance.new("UIGradient")
+titleGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0, CONFIG.AccentA),
+	ColorSequenceKeypoint.new(0.5, Color3.new(1, 1, 1)),
+	ColorSequenceKeypoint.new(1, CONFIG.AccentB),
+})
+titleGradient.Parent = titleLabel
+
+if not CONFIG.Title then
+	task.spawn(function()
+		local ok, info = pcall(function()
+			return MarketplaceService:GetProductInfo(game.PlaceId)
+		end)
+		if ok and info and info.Name and screenGui.Parent then
+			titleLabel.Text = info.Name
+		end
+	end)
+end
 
 local dotsHolder = Instance.new("Frame")
 dotsHolder.Name = "DotsHolder"
-dotsHolder.Size = UDim2.fromOffset(180, 60)
-dotsHolder.AnchorPoint = Vector2.new(0.5, 0.5)
-dotsHolder.Position = UDim2.fromScale(0.5, 0.5)
+dotsHolder.Size = UDim2.new(1, 0, 0, 70)
+dotsHolder.Position = UDim2.fromOffset(0, 80)
 dotsHolder.BackgroundTransparency = 1
-dotsHolder.ZIndex = 2
-dotsHolder.Parent = background
+dotsHolder.Parent = content
 
-local dotsLayout = Instance.new("UIListLayout")
-dotsLayout.FillDirection = Enum.FillDirection.Horizontal
-dotsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-dotsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-dotsLayout.Padding = UDim.new(0, 24)
-dotsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-dotsLayout.Parent = dotsHolder
-
-local DOT_SIZE = 22
-local DOT_COLORS = {
-	Color3.fromRGB(255, 255, 255),
-	Color3.fromRGB(255, 255, 255),
-	Color3.fromRGB(255, 255, 255),
-}
-
+local DOT_SIZE = 16
+local DOT_SPACING = 30
 local dots = {}
-for i = 1, 3 do
+for i = 1, CONFIG.DotCount do
 	local dot = Instance.new("Frame")
 	dot.Name = "Dot" .. i
 	dot.Size = UDim2.fromOffset(DOT_SIZE, DOT_SIZE)
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.BackgroundColor3 = DOT_COLORS[i]
 	dot.BorderSizePixel = 0
-	dot.LayoutOrder = i
-	dot.ZIndex = 2
 	dot.Parent = dotsHolder
 
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(1, 0)
 	corner.Parent = dot
 
-	dots[i] = dot
+	local glow = Instance.new("UIStroke")
+	glow.Thickness = 3
+	glow.Transparency = 0.6
+	glow.Parent = dot
+
+	dots[i] = {frame = dot, glow = glow}
 end
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = "Status"
+statusLabel.Size = UDim2.new(1, 0, 0, 24)
+statusLabel.Position = UDim2.fromOffset(0, 165)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Font = Enum.Font.GothamMedium
+statusLabel.Text = ""
+statusLabel.TextColor3 = Color3.fromRGB(210, 210, 235)
+statusLabel.TextSize = 18
+statusLabel.Parent = content
+
+-- Progress bar
+local barTrack = Instance.new("Frame")
+barTrack.Name = "BarTrack"
+barTrack.Size = UDim2.new(0.8, 0, 0, 8)
+barTrack.AnchorPoint = Vector2.new(0.5, 0)
+barTrack.Position = UDim2.new(0.5, 0, 0, 205)
+barTrack.BackgroundColor3 = Color3.new(1, 1, 1)
+barTrack.BackgroundTransparency = 0.88
+barTrack.BorderSizePixel = 0
+barTrack.Parent = content
+Instance.new("UICorner", barTrack).CornerRadius = UDim.new(1, 0)
+
+local barFill = Instance.new("Frame")
+barFill.Name = "Fill"
+barFill.Size = UDim2.fromScale(0, 1)
+barFill.BackgroundColor3 = Color3.new(1, 1, 1)
+barFill.BorderSizePixel = 0
+barFill.ClipsDescendants = true
+barFill.Parent = barTrack
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
+
+local fillGradient = Instance.new("UIGradient")
+fillGradient.Color = ColorSequence.new(CONFIG.AccentA, CONFIG.AccentB)
+fillGradient.Parent = barFill
+
+local shine = Instance.new("Frame")
+shine.Name = "Shine"
+shine.Size = UDim2.fromScale(1, 1)
+shine.BackgroundColor3 = Color3.new(1, 1, 1)
+shine.BorderSizePixel = 0
+shine.Parent = barFill
+
+local shineGradient = Instance.new("UIGradient")
+shineGradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1),
+	NumberSequenceKeypoint.new(0.5, 0.45),
+	NumberSequenceKeypoint.new(1, 1),
+})
+shineGradient.Parent = shine
 
 local percentLabel = Instance.new("TextLabel")
 percentLabel.Name = "PercentLabel"
-percentLabel.Size = UDim2.fromOffset(300, 40)
-percentLabel.AnchorPoint = Vector2.new(0.5, 1)
-percentLabel.Position = UDim2.new(0.5, 0, 1, -60)
+percentLabel.Size = UDim2.new(1, 0, 0, 24)
+percentLabel.Position = UDim2.fromOffset(0, 222)
 percentLabel.BackgroundTransparency = 1
 percentLabel.Font = Enum.Font.GothamBold
 percentLabel.Text = "0%"
 percentLabel.TextColor3 = Color3.new(1, 1, 1)
-percentLabel.TextSize = 22
-percentLabel.TextTransparency = 0
-percentLabel.ZIndex = 2
-percentLabel.Parent = background
+percentLabel.TextSize = 18
+percentLabel.Parent = content
+
+local tipLabel = Instance.new("TextLabel")
+tipLabel.Name = "Tip"
+tipLabel.Size = UDim2.new(0.9, 0, 0, 40)
+tipLabel.AnchorPoint = Vector2.new(0.5, 1)
+tipLabel.Position = UDim2.new(0.5, 0, 1, -40)
+tipLabel.BackgroundTransparency = 1
+tipLabel.Font = Enum.Font.Gotham
+tipLabel.Text = ""
+tipLabel.TextColor3 = Color3.fromRGB(170, 170, 200)
+tipLabel.TextSize = 16
+tipLabel.TextWrapped = true
+tipLabel.TextTransparency = 1
+tipLabel.Parent = background
 
 local currentPercent = 0
 local displayedPercent = 0
+local statusText = ""
+local finished = false
 
 local function updatePercentText()
 	percentLabel.Text = math.floor(displayedPercent) .. "%"
+	barFill.Size = UDim2.fromScale(displayedPercent / 100, 1)
 end
-
-task.spawn(function()
-	while screenGui.Parent do
-		if displayedPercent < currentPercent then
-			displayedPercent = math.min(currentPercent, displayedPercent + math.max((currentPercent - displayedPercent) * 0.15, 0.4))
-			updatePercentText()
-		end
-		RunService.Heartbeat:Wait()
-	end
-end)
 
 local function setPercent(p)
 	currentPercent = math.clamp(p, 0, 100)
 end
 
-task.spawn(function()
-	local t = 0
-	local bounceHeight = 14
-	local baseY = 0
-	while screenGui.Parent do
-		t += RunService.Heartbeat:Wait()
-		local offset = math.sin(t * 4.2) * bounceHeight
-		dots[1].Position = UDim2.new(0.5, 0, 0.5, baseY - math.max(offset, 0))
-		local scale = 1 + math.max(offset, 0) / (bounceHeight * 6)
-		dots[1].Size = UDim2.fromOffset(DOT_SIZE * scale, DOT_SIZE * scale)
+local function setStatus(text)
+	statusText = text
+end
+
+local function lerpColor(t)
+	return CONFIG.AccentA:Lerp(CONFIG.AccentB, (math.sin(t) + 1) / 2)
+end
+
+-- Single per-frame animation loop for everything on screen.
+local elapsed = 0
+local animConnection
+animConnection = RunService.RenderStepped:Connect(function(dt)
+	if not screenGui.Parent then
+		animConnection:Disconnect()
+		return
+	end
+	elapsed += dt
+
+	if displayedPercent < currentPercent then
+		displayedPercent = math.min(currentPercent, displayedPercent + math.max((currentPercent - displayedPercent) * 0.15, 0.4))
+		updatePercentText()
+	end
+
+	bgGradient.Rotation = 90 + math.sin(elapsed * 0.3) * 25
+
+	for _, s in ipairs(stars) do
+		s.y -= s.speed * dt
+		if s.y < -0.02 then
+			s.y = 1.02
+			s.x = math.random()
+		end
+		s.frame.Position = UDim2.fromScale(s.x + math.sin(elapsed * 0.5 + s.phase) * 0.005, s.y)
+		s.frame.BackgroundTransparency = 0.25 + (math.sin(elapsed * s.twinkle + s.phase) + 1) * 0.3
+	end
+
+	titleGradient.Offset = Vector2.new(math.sin(elapsed * 0.8) * 0.5, 0)
+
+	-- Wave of bouncing, colour-cycling dots
+	local count = #dots
+	local startX = -((count - 1) * DOT_SPACING) / 2
+	for i, d in ipairs(dots) do
+		local wave = math.sin(elapsed * 5 - i * 0.7)
+		local lift = math.max(wave, 0)
+		local scale = 0.8 + lift * 0.5
+		local color = lerpColor(elapsed * 1.5 + i * 0.6)
+		d.frame.Position = UDim2.new(0.5, startX + (i - 1) * DOT_SPACING, 0.5, -lift * 18)
+		d.frame.Size = UDim2.fromOffset(DOT_SIZE * scale, DOT_SIZE * scale)
+		d.frame.BackgroundColor3 = color
+		d.glow.Color = color
+		d.glow.Transparency = 0.85 - lift * 0.5
+	end
+
+	shineGradient.Offset = Vector2.new(((elapsed * 0.7) % 2) - 1, 0)
+
+	if finished then
+		statusLabel.Text = statusText
+	else
+		statusLabel.Text = statusText .. string.rep(".", math.floor(elapsed * 2.5) % 4)
 	end
 end)
 
+-- Rotating tips
 task.spawn(function()
-	local t = 0
-	while screenGui.Parent do
-		t += RunService.Heartbeat:Wait()
-		local pulse = (math.sin(t * 5) + 1) / 2
-		local scale = 0.6 + pulse * 0.7
-		dots[2].Size = UDim2.fromOffset(DOT_SIZE * scale, DOT_SIZE * scale)
-		dots[2].BackgroundTransparency = 0.1 + (1 - pulse) * 0.5
+	local tips = CONFIG.Tips
+	if #tips == 0 then
+		return
 	end
-end)
-
-task.spawn(function()
-	local t = 0
-	while screenGui.Parent do
-		t += RunService.Heartbeat:Wait()
-		dots[3].Rotation = (t * 220) % 360
-		local squish = (math.sin(t * 6) + 1) / 2
-		dots[3].Size = UDim2.fromOffset(DOT_SIZE * (1 + squish * 0.35), DOT_SIZE * (1 - squish * 0.25))
+	local index = math.random(1, #tips)
+	local fadeInfo = TweenInfo.new(0.4, Enum.EasingStyle.Quad)
+	while screenGui.Parent and not finished do
+		tipLabel.Text = tips[index]
+		TweenService:Create(tipLabel, fadeInfo, {TextTransparency = 0}):Play()
+		task.wait(CONFIG.TipInterval)
+		if finished or not screenGui.Parent then
+			break
+		end
+		local out = TweenService:Create(tipLabel, fadeInfo, {TextTransparency = 1})
+		out:Play()
+		out.Completed:Wait()
+		index = index % #tips + 1
 	end
 end)
 
@@ -234,8 +425,11 @@ local function waitForGraphicsSettle()
 end
 
 task.spawn(function()
+	setStatus("Loading assets")
 	preloadAssets()
+	setStatus("Preparing your character")
 	waitForCharacter()
+	setStatus("Building the world")
 	waitForGraphicsSettle()
 	setPercent(100)
 
@@ -245,21 +439,17 @@ task.spawn(function()
 	end
 	displayedPercent = 100
 	updatePercentText()
+	finished = true
+	setStatus("Ready!")
 
-	task.wait(0.35)
+	task.wait(0.5)
 
-	local fadeInfo = TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	local tweens = {
-		TweenService:Create(background, fadeInfo, {BackgroundTransparency = 1}),
-		TweenService:Create(percentLabel, fadeInfo, {TextTransparency = 1}),
-	}
-	for _, dot in ipairs(dots) do
-		tweens[#tweens + 1] = TweenService:Create(dot, fadeInfo, {BackgroundTransparency = 1})
-	end
-	for _, tw in ipairs(tweens) do
-		tw:Play()
-	end
-	tweens[1].Completed:Wait()
+	local fadeInfo = TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	local fade = TweenService:Create(background, fadeInfo, {GroupTransparency = 1})
+	TweenService:Create(uiScale, fadeInfo, {Scale = 1.15}):Play()
+	fade:Play()
+	fade.Completed:Wait()
 
+	animConnection:Disconnect()
 	screenGui:Destroy()
 end)
