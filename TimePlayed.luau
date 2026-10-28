@@ -8,9 +8,14 @@ local timeStore = DataStoreService:GetOrderedDataStore("PlaytimeLeaderboard_v2")
 
 local boardPart = workspace:FindFirstChild("TimeLeaderboard", true)
 
-local totalTime = {}
-local lastSaveAt = {}
-local timeLoaded = {}
+local SAVE_RETRIES = 3
+local SHUTDOWN_BUDGET = 25
+local MAX_SESSION_DELTA = 7 * 86400
+
+-- Per-UserId so a save can finish after the Player object is gone.
+-- pending = seconds earned but not yet written; saving = in-flight lock.
+local saveStates = {}
+local inFlightSaves = 0
 
 local DANCE_ANIMATION_IDS = {
 	"rbxassetid://507771019",
@@ -39,47 +44,80 @@ local function formatTime(seconds)
 	end
 end
 
-local function loadTime(player)
-	local key = tostring(player.UserId)
-	for attempt = 1, 3 do
-		local ok, result = pcall(function()
-			return timeStore:GetAsync(key)
+local function waitForBudget(requestType)
+	for _ = 1, 10 do
+		local ok, budget = pcall(function()
+			return DataStoreService:GetRequestBudgetForRequestType(requestType)
 		end)
-		if ok then
-			timeLoaded[player] = true
-			if type(result) == "number" then
-				return math.floor(math.max(result, 0))
-			end
-			return 0
+		if not ok or (type(budget) == "number" and budget > 0) then
+			return true
 		end
-		task.wait(2)
+		task.wait(1)
 	end
-	return 0
+	return false
 end
 
-local function saveTime(player)
-	if not timeLoaded[player] or not lastSaveAt[player] then
+local function trackPlayer(player)
+	if player.UserId <= 0 or saveStates[player.UserId] then
+		return
+	end
+	saveStates[player.UserId] = { lastAt = os.clock(), pending = 0, saving = false }
+end
+
+-- Incremental UpdateAsync, so no prior load is needed and nothing is double counted:
+-- elapsed time is claimed into `pending` once, and only cleared after a successful write.
+local function saveTime(player, deadline)
+	local userId = player.UserId
+	local state = saveStates[userId]
+	if not state then
 		return
 	end
 
-	local delta = math.floor(os.clock() - lastSaveAt[player])
-	if delta <= 0 then
-		return
-	end
-
-	local key = tostring(player.UserId)
-	for attempt = 1, 3 do
-		local ok = pcall(function()
-			timeStore:UpdateAsync(key, function(old)
-				return (type(old) == "number" and old or 0) + delta
-			end)
-		end)
-		if ok then
-			lastSaveAt[player] = os.clock()
+	while state.saving do
+		if deadline and os.clock() >= deadline then
 			return
 		end
-		task.wait(2)
+		task.wait(0.1)
 	end
+	state.saving = true
+	inFlightSaves += 1
+
+	local now = os.clock()
+	local elapsed = now - state.lastAt
+	state.lastAt = now
+	if elapsed == elapsed and elapsed > 0 then
+		state.pending += math.min(math.floor(elapsed), MAX_SESSION_DELTA)
+	end
+
+	local delta = state.pending
+	if delta > 0 then
+		local key = tostring(userId)
+		for attempt = 1, SAVE_RETRIES do
+			if deadline and os.clock() >= deadline then
+				break
+			end
+			if waitForBudget(Enum.DataStoreRequestType.UpdateAsync) then
+				local ok = pcall(function()
+					timeStore:UpdateAsync(key, function(old)
+						if type(old) ~= "number" or old ~= old or old < 0 then
+							old = 0
+						end
+						return math.floor(old) + delta
+					end)
+				end)
+				if ok then
+					state.pending -= delta
+					break
+				end
+			end
+			if attempt < SAVE_RETRIES then
+				task.wait(2)
+			end
+		end
+	end
+
+	state.saving = false
+	inFlightSaves -= 1
 end
 
 local nameCache = {}
@@ -91,7 +129,7 @@ local function getPlayerName(userId)
 	local ok, name = pcall(function()
 		return Players:GetNameFromUserIdAsync(userId)
 	end)
-	if ok and name then
+	if ok and type(name) == "string" then
 		nameCache[userId] = name
 		return name
 	end
@@ -372,14 +410,21 @@ local function updateBoard()
 		return
 	end
 
+	if not waitForBudget(Enum.DataStoreRequestType.GetSortedAsync) then
+		return
+	end
 	local ok, pages = pcall(function()
 		return timeStore:GetSortedAsync(false, 10)
 	end)
-	if not ok then
+	if not ok or not pages then
 		return
 	end
-
-	local top = pages:GetCurrentPage()
+	local okPage, top = pcall(function()
+		return pages:GetCurrentPage()
+	end)
+	if not okPage or type(top) ~= "table" then
+		return
+	end
 
 	for i = 1, 10 do
 		local row = rowsFrame:FindFirstChild("Row" .. i)
@@ -395,10 +440,12 @@ local function updateBoard()
 					nameLabel.Text = userId and getPlayerName(userId) or "???"
 				end
 				if timeLabel then
-					timeLabel.Text = formatTime(entry.value)
+					timeLabel.Text = formatTime(type(entry.value) == "number" and entry.value or 0)
 				end
-				if avatar and userId then
-					avatar.Image = ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(userId)
+				if avatar then
+					avatar.Image = userId
+							and ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(userId)
+						or ""
 				end
 			else
 				if nameLabel then nameLabel.Text = "-" end
@@ -412,56 +459,74 @@ local function updateBoard()
 	if topEntry then
 		local userId = tonumber(topEntry.key)
 		if userId then
-			task.spawn(updateRig, userId)
+			task.spawn(function()
+				pcall(updateRig, userId)
+			end)
 		end
 	end
 end
 
-Players.PlayerAdded:Connect(function(player)
-	totalTime[player] = loadTime(player)
-	lastSaveAt[player] = os.clock()
+local function onPlayerAdded(player)
+	trackPlayer(player)
 	player.CharacterAppearanceLoaded:Connect(function()
 		if currentTopUserId == player.UserId then
 			task.delay(0.5, updateRig, player.UserId)
 		end
 	end)
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+for _, player in ipairs(Players:GetPlayers()) do
+	task.spawn(onPlayerAdded, player)
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	saveTime(player)
+	local state = saveStates[player.UserId]
+	-- Keep unsaved time if the write failed and the player rejoins quickly.
+	if state and state.pending == 0 and not Players:GetPlayerByUserId(player.UserId) then
+		saveStates[player.UserId] = nil
+	end
+end)
+
+game:BindToClose(function()
+	local deadline = os.clock() + SHUTDOWN_BUDGET
+	for _, player in ipairs(Players:GetPlayers()) do
+		task.spawn(saveTime, player, deadline)
+	end
+	-- Also waits for PlayerRemoving saves already in flight.
+	task.wait()
+	while inFlightSaves > 0 and os.clock() < deadline do
+		task.wait(0.1)
+	end
 end)
 
 task.spawn(function()
 	while true do
 		task.wait(30)
 		if currentTopUserId then
-			task.spawn(updateRig, currentTopUserId)
+			task.spawn(function()
+				pcall(updateRig, currentTopUserId)
+			end)
 		end
 	end
-end)
-
-Players.PlayerRemoving:Connect(function(player)
-	saveTime(player)
-	totalTime[player] = nil
-	lastSaveAt[player] = nil
-	timeLoaded[player] = nil
-end)
-
-game:BindToClose(function()
-	for _, player in ipairs(Players:GetPlayers()) do
-		saveTime(player)
-	end
-	task.wait(2)
 end)
 
 task.spawn(function()
 	while true do
 		task.wait(AUTOSAVE_INTERVAL)
 		for _, player in ipairs(Players:GetPlayers()) do
-			saveTime(player)
+			task.spawn(saveTime, player)
 		end
 	end
 end)
 
 task.spawn(function()
 	while true do
-		updateBoard()
+		local ok, err = pcall(updateBoard)
+		if not ok then
+			warn("[TimePlayed] board update failed: " .. tostring(err))
+		end
 		task.wait(BOARD_UPDATE_INTERVAL)
 	end
 end)

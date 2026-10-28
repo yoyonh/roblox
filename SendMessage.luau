@@ -2,6 +2,7 @@ local TextService = game:GetService("TextService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
+local TextChatService = game:GetService("TextChatService")
 local AntiCheat = require(game.ServerScriptService:WaitForChild("Systems"):WaitForChild("AntiCheat"))
 
 local adminMuteStore = DataStoreService:GetDataStore("AdminChatMutes_v1")
@@ -66,6 +67,11 @@ local HASH_BACKOFF_AFTER = 2
 local HASH_BACKOFF_SECONDS = 30
 local MASK_MAX_RATIO = 0.5
 
+local MAX_TAG_CHARACTERS = 16
+local MAX_NAME_CHARACTERS = 50
+local MAX_SYSTEM_TEXT_CHARACTERS = 400
+local MAX_ADMIN_MUTE_SECONDS = 30 * 24 * 3600
+
 local SYSTEM_COLOR = Color3.fromRGB(75, 160, 255)
 local MUTE_COLOR = Color3.fromRGB(255, 205, 70)
 local BAN_COLOR = Color3.fromRGB(255, 75, 75)
@@ -78,11 +84,11 @@ local recentMessages = {}
 local displayOrder = 0
 
 local RUSSIAN_UPPER_TO_LOWER = {
-	["А"]="а", ["Б"]="б", ["В"]="в", ["Г"]="г", ["Д"]="д", ["Е"]="е", ["Ё"]="ё",
-	["Ж"]="ж", ["З"]="з", ["И"]="и", ["Й"]="й", ["К"]="к", ["Л"]="л", ["М"]="м",
-	["Н"]="н", ["О"]="о", ["П"]="п", ["Р"]="р", ["С"]="с", ["Т"]="т", ["У"]="у",
-	["Ф"]="ф", ["Х"]="х", ["Ц"]="ц", ["Ч"]="ч", ["Ш"]="ш", ["Щ"]="щ", ["Ъ"]="ъ",
-	["Ы"]="ы", ["Ь"]="ь", ["Э"]="э", ["Ю"]="ю", ["Я"]="я",
+	["Рђ"]="Р°", ["Р‘"]="Р±", ["Р’"]="РІ", ["Р“"]="Рі", ["Р”"]="Рґ", ["Р•"]="Рµ", ["РЃ"]="С‘",
+	["Р–"]="Р¶", ["Р—"]="Р·", ["Р"]="Рё", ["Р™"]="Р№", ["Рљ"]="Рє", ["Р›"]="Р»", ["Рњ"]="Рј",
+	["Рќ"]="РЅ", ["Рћ"]="Рѕ", ["Рџ"]="Рї", ["Р "]="СЂ", ["РЎ"]="СЃ", ["Рў"]="С‚", ["РЈ"]="Сѓ",
+	["Р¤"]="С„", ["РҐ"]="С…", ["Р¦"]="С†", ["Р§"]="С‡", ["РЁ"]="С€", ["Р©"]="С‰", ["РЄ"]="СЉ",
+	["Р«"]="С‹", ["Р¬"]="СЊ", ["Р­"]="СЌ", ["Р®"]="СЋ", ["РЇ"]="СЏ",
 }
 local RUSSIAN_LOWER_TO_UPPER = {}
 for upper, lower in pairs(RUSSIAN_UPPER_TO_LOWER) do
@@ -90,9 +96,9 @@ for upper, lower in pairs(RUSSIAN_UPPER_TO_LOWER) do
 end
 
 local HOMOGLYPHS = {
-	["0"]="о", ["o"]="о", ["a"]="а", ["@"]="а", ["4"]="а", ["e"]="е", ["3"]="е",
-	["c"]="с", ["x"]="х", ["p"]="р", ["y"]="у", ["k"]="к", ["h"]="н", ["m"]="м",
-	["t"]="т", ["b"]="в", ["6"]="б", ["ё"]="е", ["й"]="и",
+	["0"]="Рѕ", ["o"]="Рѕ", ["a"]="Р°", ["@"]="Р°", ["4"]="Р°", ["e"]="Рµ", ["3"]="Рµ",
+	["c"]="СЃ", ["x"]="С…", ["p"]="СЂ", ["y"]="Сѓ", ["k"]="Рє", ["h"]="РЅ", ["m"]="Рј",
+	["t"]="С‚", ["b"]="РІ", ["6"]="Р±", ["С‘"]="Рµ", ["Р№"]="Рё",
 }
 
 local INVISIBLE_CODEPOINTS = {
@@ -108,11 +114,11 @@ local SEPARATOR_CODEPOINTS = {
 	[0x3000]=true,
 }
 
-local function lowerChar(ch)
+local function lowerChar(ch: string)
 	return RUSSIAN_UPPER_TO_LOWER[ch] or (#ch == 1 and ch:lower()) or ch
 end
 
-local function upperChar(ch)
+local function upperChar(ch: string)
 	return RUSSIAN_LOWER_TO_UPPER[ch] or (#ch == 1 and ch:upper()) or ch
 end
 
@@ -124,7 +130,7 @@ local function unicodeLower(text)
 	return table.concat(out)
 end
 
-local function isSeparatorChar(cp, ch)
+local function isSeparatorChar(cp: number, ch: string)
 	if SEPARATOR_CODEPOINTS[cp] then
 		return true
 	end
@@ -172,14 +178,14 @@ local function buildSet(str)
 end
 
 local LAUGH_SETS = {}
-for _, sample in ipairs({"ха", "хе", "хи", "ah", "eh", "ha", "ja", "ло", "lo", "ке", "ор", "хд", "xd"}) do
+for _, sample in ipairs({"С…Р°", "С…Рµ", "С…Рё", "ah", "eh", "ha", "ja", "Р»Рѕ", "lo", "РєРµ", "РѕСЂ", "С…Рґ", "xd"}) do
 	table.insert(LAUGH_SETS, buildSet(normalizeCompact(sample)))
 end
 
 local BLOCKED_CONTACT_TOKENS = {}
 for _, token in ipairs({
-	"discord", "дискорд", "telegram", "телеграм", "whatsapp", "ватсап",
-	"viber", "вайбер", "tiktok", "тикток", "t.me", "vk.com", "вконтакте",
+	"discord", "РґРёСЃРєРѕСЂРґ", "telegram", "С‚РµР»РµРіСЂР°Рј", "whatsapp", "РІР°С‚СЃР°Рї",
+	"viber", "РІР°Р№Р±РµСЂ", "tiktok", "С‚РёРєС‚РѕРє", "t.me", "vk.com", "РІРєРѕРЅС‚Р°РєС‚Рµ",
 	}) do
 	table.insert(BLOCKED_CONTACT_TOKENS, normalizeCompact(token))
 end
@@ -187,7 +193,7 @@ end
 local PROFANITY_ROOTS = {}
 do
 	local seen = {}
-	for _, root in ipairs({"гондон", "гандон", "gondon"}) do
+	for _, root in ipairs({"РіРѕРЅРґРѕРЅ", "РіР°РЅРґРѕРЅ", "gondon"}) do
 		local normalized = normalizeCompact(root)
 		if normalized ~= "" and not seen[normalized] then
 			seen[normalized] = true
@@ -419,12 +425,40 @@ local function escapeRichText(value)
 	text = text:gsub("<", "&lt;")
 	text = text:gsub(">", "&gt;")
 	text = text:gsub('"', "&quot;")
+	text = text:gsub("'", "&apos;")
 	return text
+end
+
+-- Strips control/invisible characters and caps length for server-supplied strings.
+local function cleanLabel(value, maxCharacters, keepNewlines)
+	local text = tostring(value)
+	if not utf8.len(text) then
+		return ""
+	end
+	local out = {}
+	local count = 0
+	for _, cp in utf8.codes(text) do
+		if cp >= 32 and cp ~= 127 and not (cp >= 0x80 and cp <= 0x9F) and not INVISIBLE_CODEPOINTS[cp]
+			and not (cp >= 0xE000 and cp <= 0xF8FF) and not (cp >= 0xFFF0 and cp <= 0xFFFF) then
+			count += 1
+			if count > maxCharacters then
+				break
+			end
+			table.insert(out, utf8.char(cp))
+		elseif cp == 9 or cp == 10 or cp == 13 then
+			count += 1
+			if count > maxCharacters then
+				break
+			end
+			table.insert(out, (keepNewlines and cp == 10) and "\n" or " ")
+		end
+	end
+	return table.concat(out)
 end
 
 local function getNameColor(userId, username)
 	local numericId = tonumber(userId)
-	if not numericId then
+	if not numericId or numericId ~= numericId then
 		numericId = 0
 		for index = 1, #username do
 			numericId = (numericId * 33 + string.byte(username, index)) % 2147483647
@@ -462,10 +496,15 @@ local GRADIENT_TAG_COLORS = {
 }
 
 local function buildTagMarkup(tagText, style)
-	if type(tagText) ~= "string" or tagText == "" then
+	if type(tagText) ~= "string" then
 		return ""
 	end
-	style = math.clamp(math.floor(tonumber(style) or 1), 1, 10)
+	tagText = cleanLabel(tagText, MAX_TAG_CHARACTERS)
+	if tagText == "" then
+		return ""
+	end
+	style = tonumber(style) or 1
+	style = math.clamp(style == style and math.floor(style) or 1, 1, 10)
 	local escapedTag = escapeRichText(tagText)
 	if style <= 5 then
 		return ('<font color="%s">[%s]</font> '):format(colorToHex(SOLID_TAG_COLORS[style]), escapedTag)
@@ -514,7 +553,7 @@ local function captureSender(player)
 	return {
 		senderUserId = player.UserId,
 		username = player.Name,
-		displayName = player.DisplayName,
+		displayName = cleanLabel(player.DisplayName, MAX_NAME_CHARACTERS),
 		tagText = player:GetAttribute("ChatTagText"),
 		tagStyle = player:GetAttribute("ChatTagStyle"),
 		developerVerified = player:GetAttribute("DeveloperVerified") == true,
@@ -590,13 +629,16 @@ local function createDisplayedMessage(scrollingFrame, entry, isHistory)
 end
 
 local function makeSystemEntry(text, color)
+	if typeof(color) ~= "Color3" then
+		color = nil
+	end
 	return {
 		id = allocateId(),
 		system = true,
 		color = color or SYSTEM_COLOR,
-		username = "Система",
-		displayName = "Система",
-		text = text,
+		username = "РЎРёСЃС‚РµРјР°",
+		displayName = "РЎРёСЃС‚РµРјР°",
+		text = cleanLabel(text, MAX_SYSTEM_TEXT_CHARACTERS, true),
 		createdAt = os.clock(),
 	}
 end
@@ -711,11 +753,18 @@ local function scheduleUnmuteNotice(player, state, seconds)
 		end
 		resetAfterMute(state, now)
 		updateMuteAttribute(player, nil)
-		sendSystemMessage(player, "Мут снят. Теперь можно писать в чат.")
+		sendSystemMessage(player, "РњСѓС‚ СЃРЅСЏС‚. РўРµРїРµСЂСЊ РјРѕР¶РЅРѕ РїРёСЃР°С‚СЊ РІ С‡Р°С‚.")
 	end)
 end
 
 local function removeFloodMessages(userId, now)
+	local history = {}
+	for _, entry in ipairs(recentMessages) do
+		if not (entry.senderUserId == userId and not entry.system and now - entry.createdAt <= FLOOD_REMOVE_WINDOW) then
+			table.insert(history, entry)
+		end
+	end
+	recentMessages = history
 	local messages = chatMessagesBySender[userId]
 	if not messages then
 		return
@@ -748,7 +797,7 @@ local function mutePlayer(player, state, reason)
 
 	removeFloodMessages(player.UserId, now)
 	updateMuteAttribute(player, duration)
-	sendSystemMessage(player, ("Чат заблокирован на %d сек. Причина: %s."):format(duration, reason), MUTE_COLOR)
+	sendSystemMessage(player, ("Р§Р°С‚ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅ РЅР° %d СЃРµРє. РџСЂРёС‡РёРЅР°: %s."):format(duration, reason), MUTE_COLOR)
 	scheduleUnmuteNotice(player, state, duration)
 end
 
@@ -762,7 +811,7 @@ local function applyAdminMute(player, state, expiresAt, reason, label)
 	state.mutedUntil = math.max(state.mutedUntil, os.clock() + remaining)
 	state.queue = {}
 	updateMuteAttribute(player, remaining)
-	sendSystemMessage(player, ("Вам выдан мут на %s. Причина: %s"):format(label or (remaining .. " сек."), reason), MUTE_COLOR)
+	sendSystemMessage(player, ("Р’Р°Рј РІС‹РґР°РЅ РјСѓС‚ РЅР° %s. РџСЂРёС‡РёРЅР°: %s"):format(label or (remaining .. " СЃРµРє."), reason), MUTE_COLOR)
 	scheduleUnmuteNotice(player, state, remaining)
 end
 
@@ -775,7 +824,7 @@ local function applyStoredAdminMute(player)
 		return
 	end
 	local expiresAt = tonumber(data.expiresAt) or 0
-	if expiresAt <= os.time() then
+	if expiresAt ~= expiresAt or expiresAt <= os.time() then
 		if expiresAt > 0 then
 			pcall(function()
 				adminMuteStore:RemoveAsync(key)
@@ -785,7 +834,8 @@ local function applyStoredAdminMute(player)
 	end
 	task.delay(1, function()
 		if player.Parent == Players then
-			applyAdminMute(player, getState(player.UserId), expiresAt, tostring(data.reason or "Решение администратора"))
+			applyAdminMute(player, getState(player.UserId), math.min(expiresAt, os.time() + MAX_ADMIN_MUTE_SECONDS),
+				cleanLabel(data.reason or "Р РµС€РµРЅРёРµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", 200))
 		end
 	end)
 end
@@ -812,7 +862,7 @@ end
 
 local function registerViolation(player, state, reason, weight)
 	state.trust = math.max(0, state.trust - TRUST_LOSS_VIOLATION)
-	addStrikes(player, state, weight, reason, ("Сообщение не отправлено (%s). Продолжишь — получишь мут."):format(reason))
+	addStrikes(player, state, weight, reason, ("РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РѕС‚РїСЂР°РІР»РµРЅРѕ (%s). РџСЂРѕРґРѕР»Р¶РёС€СЊ вЂ” РїРѕР»СѓС‡РёС€СЊ РјСѓС‚."):format(reason))
 end
 
 local function collapseRuns(normalized)
@@ -909,11 +959,11 @@ local function evaluateMessage(state, rawLength, normalized, now)
 	if not laughter then
 		if clen >= 12 and countUnique(collapsed) <= 3 then
 			score = math.max(score, 0.65)
-			reason = "бессмысленный набор символов"
+			reason = "Р±РµСЃСЃРјС‹СЃР»РµРЅРЅС‹Р№ РЅР°Р±РѕСЂ СЃРёРјРІРѕР»РѕРІ"
 		end
 		if rawLength >= 60 and clen <= 5 then
 			score = math.max(score, 0.6)
-			reason = reason or "бессмысленный набор символов"
+			reason = reason or "Р±РµСЃСЃРјС‹СЃР»РµРЅРЅС‹Р№ РЅР°Р±РѕСЂ СЃРёРјРІРѕР»РѕРІ"
 		end
 	end
 
@@ -943,10 +993,10 @@ local function evaluateMessage(state, rawLength, normalized, now)
 		local neededRepeats = (clen <= 4) and 4 or 2
 		if similarCount >= neededRepeats then
 			score = math.max(score, fastRepeat and 0.9 or 0.75)
-			reason = "повторяющиеся сообщения"
+			reason = "РїРѕРІС‚РѕСЂСЏСЋС‰РёРµСЃСЏ СЃРѕРѕР±С‰РµРЅРёСЏ"
 		elseif similarCount >= 1 and fastRepeat then
 			score = math.max(score, 0.45)
-			reason = reason or "повторяющиеся сообщения"
+			reason = reason or "РїРѕРІС‚РѕСЂСЏСЋС‰РёРµСЃСЏ СЃРѕРѕР±С‰РµРЅРёСЏ"
 		end
 	end
 
@@ -975,7 +1025,7 @@ local function broadcastEntry(entry)
 	local userId = entry.senderUserId
 	local kept = {}
 	for _, record in ipairs(chatMessagesBySender[userId] or {}) do
-		if record.instance and record.instance.Parent then
+		if record.instance and record.instance.Parent and entry.createdAt - record.createdAt <= FLOOD_REMOVE_WINDOW then
 			table.insert(kept, record)
 		end
 	end
@@ -1022,7 +1072,7 @@ local function processQueued(sender, state, item)
 	local broadcastText, failure = filterWithTimeout(item.text, sender.UserId)
 	if type(broadcastText) ~= "string" or broadcastText == "" then
 		warn("[Chat] filter failed:", failure)
-		sendWarning(sender, state, "Сообщение не отправлено: фильтр Roblox недоступен. Попробуй ещё раз.")
+		sendWarning(sender, state, "РЎРѕРѕР±С‰РµРЅРёРµ РЅРµ РѕС‚РїСЂР°РІР»РµРЅРѕ: С„РёР»СЊС‚СЂ Roblox РЅРµРґРѕСЃС‚СѓРїРµРЅ. РџРѕРїСЂРѕР±СѓР№ РµС‰С‘ СЂР°Р·.")
 		return
 	end
 
@@ -1031,14 +1081,24 @@ local function processQueued(sender, state, item)
 		return
 	end
 
+	local canChatOk, canChat = pcall(function()
+		return TextChatService:CanUserChatAsync(sender.UserId)
+	end)
+	if canChatOk and canChat == false then
+		return
+	end
+	if sender.Parent ~= Players then
+		return
+	end
+
 	local ratio, visible = hashRatio(item.text, broadcastText)
 	if visible >= 3 and ratio >= HASH_BLOCK_RATIO then
 		state.hashStreak += 1
 		if state.hashStreak >= HASH_BACKOFF_AFTER then
 			state.filterBackoffUntil = now + HASH_BACKOFF_SECONDS
-			sendWarning(sender, state, ("Фильтр Roblox сейчас скрывает все твои сообщения (так бывает после флуда). Подожди %d сек и пиши обычные фразы."):format(HASH_BACKOFF_SECONDS), MUTE_COLOR)
+			sendWarning(sender, state, ("Р¤РёР»СЊС‚СЂ Roblox СЃРµР№С‡Р°СЃ СЃРєСЂС‹РІР°РµС‚ РІСЃРµ С‚РІРѕРё СЃРѕРѕР±С‰РµРЅРёСЏ (С‚Р°Рє Р±С‹РІР°РµС‚ РїРѕСЃР»Рµ С„Р»СѓРґР°). РџРѕРґРѕР¶РґРё %d СЃРµРє Рё РїРёС€Рё РѕР±С‹С‡РЅС‹Рµ С„СЂР°Р·С‹."):format(HASH_BACKOFF_SECONDS), MUTE_COLOR)
 		else
-			sendWarning(sender, state, "Фильтр Roblox скрыл всё сообщение. Попробуй переформулировать.", MUTE_COLOR)
+			sendWarning(sender, state, "Р¤РёР»СЊС‚СЂ Roblox СЃРєСЂС‹Р» РІСЃС‘ СЃРѕРѕР±С‰РµРЅРёРµ. РџРѕРїСЂРѕР±СѓР№ РїРµСЂРµС„РѕСЂРјСѓР»РёСЂРѕРІР°С‚СЊ.", MUTE_COLOR)
 		end
 		return
 	end
@@ -1051,7 +1111,7 @@ end
 
 local function enqueue(sender, state, item)
 	if #state.queue >= MAX_PENDING_PER_PLAYER then
-		sendWarning(sender, state, "Подожди, предыдущие сообщения ещё обрабатываются.")
+		sendWarning(sender, state, "РџРѕРґРѕР¶РґРё, РїСЂРµРґС‹РґСѓС‰РёРµ СЃРѕРѕР±С‰РµРЅРёСЏ РµС‰С‘ РѕР±СЂР°Р±Р°С‚С‹РІР°СЋС‚СЃСЏ.")
 		return
 	end
 	table.insert(state.queue, item)
@@ -1059,9 +1119,10 @@ local function enqueue(sender, state, item)
 		return
 	end
 	state.processing = true
+	local queue = state.queue
 	task.spawn(function()
 		while true do
-			local nextItem = table.remove(state.queue, 1)
+			local nextItem = table.remove(queue, 1)
 			if not nextItem then
 				break
 			end
@@ -1070,7 +1131,9 @@ local function enqueue(sender, state, item)
 				warn("[Chat] processQueued:", err)
 			end
 		end
-		state.processing = false
+		if state.queue == queue then
+			state.processing = false
+		end
 	end)
 end
 
@@ -1098,21 +1161,21 @@ local function replayHistory(player)
 end
 
 local HELP_TEXT = table.concat({
-	"Доступные команды:",
-	"/help — показать этот список",
-	"/правила — правила общения",
-	"/онлайн — сколько игроков на сервере",
-	"/инфо — кратко об игре",
-	"/мут — сколько осталось мута",
+	"Р”РѕСЃС‚СѓРїРЅС‹Рµ РєРѕРјР°РЅРґС‹:",
+	"/help вЂ” РїРѕРєР°Р·Р°С‚СЊ СЌС‚РѕС‚ СЃРїРёСЃРѕРє",
+	"/РїСЂР°РІРёР»Р° вЂ” РїСЂР°РІРёР»Р° РѕР±С‰РµРЅРёСЏ",
+	"/РѕРЅР»Р°Р№РЅ вЂ” СЃРєРѕР»СЊРєРѕ РёРіСЂРѕРєРѕРІ РЅР° СЃРµСЂРІРµСЂРµ",
+	"/РёРЅС„Рѕ вЂ” РєСЂР°С‚РєРѕ РѕР± РёРіСЂРµ",
+	"/РјСѓС‚ вЂ” СЃРєРѕР»СЊРєРѕ РѕСЃС‚Р°Р»РѕСЃСЊ РјСѓС‚Р°",
 }, "\n")
 
 local RULES_TEXT = table.concat({
-	"Правила чата:",
-	"1. Не оскорбляй и не унижай других.",
-	"2. Не спамь и не повторяй одно сообщение.",
-	"3. Не отправляй ссылки, контакты и личные данные.",
-	"4. Не пытайся обходить фильтр Roblox.",
-	"5. Играй честно и уважай остальных.",
+	"РџСЂР°РІРёР»Р° С‡Р°С‚Р°:",
+	"1. РќРµ РѕСЃРєРѕСЂР±Р»СЏР№ Рё РЅРµ СѓРЅРёР¶Р°Р№ РґСЂСѓРіРёС….",
+	"2. РќРµ СЃРїР°РјСЊ Рё РЅРµ РїРѕРІС‚РѕСЂСЏР№ РѕРґРЅРѕ СЃРѕРѕР±С‰РµРЅРёРµ.",
+	"3. РќРµ РѕС‚РїСЂР°РІР»СЏР№ СЃСЃС‹Р»РєРё, РєРѕРЅС‚Р°РєС‚С‹ Рё Р»РёС‡РЅС‹Рµ РґР°РЅРЅС‹Рµ.",
+	"4. РќРµ РїС‹С‚Р°Р№СЃСЏ РѕР±С…РѕРґРёС‚СЊ С„РёР»СЊС‚СЂ Roblox.",
+	"5. РРіСЂР°Р№ С‡РµСЃС‚РЅРѕ Рё СѓРІР°Р¶Р°Р№ РѕСЃС‚Р°Р»СЊРЅС‹С….",
 }, "\n")
 
 local function handlePublicCommand(player, state, text, now)
@@ -1124,23 +1187,23 @@ local function handlePublicCommand(player, state, text, now)
 	end
 	state.lastCommandAt = now
 	local command = unicodeLower(text):match("^(%S+)")
-	if command == "/help" or command == "/помощь" or command == "/команды" then
+	if command == "/help" or command == "/РїРѕРјРѕС‰СЊ" or command == "/РєРѕРјР°РЅРґС‹" then
 		sendSystemMessage(player, HELP_TEXT)
-	elseif command == "/правила" or command == "/rules" then
+	elseif command == "/РїСЂР°РІРёР»Р°" or command == "/rules" then
 		sendSystemMessage(player, RULES_TEXT)
-	elseif command == "/онлайн" or command == "/online" then
-		sendSystemMessage(player, ("Сейчас на сервере игроков: %d."):format(#Players:GetPlayers()))
-	elseif command == "/инфо" or command == "/info" then
-		sendSystemMessage(player, "Это русскоязычная социальная игра с магазином, PvP-зонами и мини-игрой TimeBomb.")
-	elseif command == "/мут" or command == "/mute" then
+	elseif command == "/РѕРЅР»Р°Р№РЅ" or command == "/online" then
+		sendSystemMessage(player, ("РЎРµР№С‡Р°СЃ РЅР° СЃРµСЂРІРµСЂРµ РёРіСЂРѕРєРѕРІ: %d."):format(#Players:GetPlayers()))
+	elseif command == "/РёРЅС„Рѕ" or command == "/info" then
+		sendSystemMessage(player, "Р­С‚Рѕ СЂСѓСЃСЃРєРѕСЏР·С‹С‡РЅР°СЏ СЃРѕС†РёР°Р»СЊРЅР°СЏ РёРіСЂР° СЃ РјР°РіР°Р·РёРЅРѕРј, PvP-Р·РѕРЅР°РјРё Рё РјРёРЅРё-РёРіСЂРѕР№ TimeBomb.")
+	elseif command == "/РјСѓС‚" or command == "/mute" then
 		local remaining, reason = getMuteInfo(state, now)
 		if remaining then
-			sendSystemMessage(player, ("Мут: осталось %d сек.%s"):format(remaining, reason and (" Причина: " .. reason .. ".") or ""), MUTE_COLOR)
+			sendSystemMessage(player, ("РњСѓС‚: РѕСЃС‚Р°Р»РѕСЃСЊ %d СЃРµРє.%s"):format(remaining, reason and (" РџСЂРёС‡РёРЅР°: " .. reason .. ".") or ""), MUTE_COLOR)
 		else
-			sendSystemMessage(player, "У тебя нет мута.")
+			sendSystemMessage(player, "РЈ С‚РµР±СЏ РЅРµС‚ РјСѓС‚Р°.")
 		end
 	else
-		sendSystemMessage(player, "Неизвестная команда. Введите /help, чтобы увидеть доступные команды.")
+		sendSystemMessage(player, "РќРµРёР·РІРµСЃС‚РЅР°СЏ РєРѕРјР°РЅРґР°. Р’РІРµРґРёС‚Рµ /help, С‡С‚РѕР±С‹ СѓРІРёРґРµС‚СЊ РґРѕСЃС‚СѓРїРЅС‹Рµ РєРѕРјР°РЅРґС‹.")
 	end
 	return true
 end
@@ -1150,7 +1213,7 @@ privateSystemMessage.Name = "PrivateSystemMessage"
 privateSystemMessage.Parent = script
 privateSystemMessage.Event:Connect(function(player, text)
 	if typeof(player) == "Instance" and player:IsA("Player") then
-		sendSystemMessage(player, "[ADMIN] " .. tostring(text))
+		sendSystemMessage(player, "[ADMIN] " .. cleanLabel(text, MAX_SYSTEM_TEXT_CHARACTERS))
 	end
 end)
 
@@ -1159,7 +1222,8 @@ adminChatControl.Name = "AdminChatControl"
 adminChatControl.Parent = script
 adminChatControl.OnInvoke = function(action, target, duration, reason, extra)
 	if action == "announceBan" then
-		sendPublicSystemMessage(("Игрок %s забанен на %s. Причина: %s"):format(tostring(target), tostring(duration), tostring(reason)), BAN_COLOR)
+		sendPublicSystemMessage(("РРіСЂРѕРє %s Р·Р°Р±Р°РЅРµРЅ РЅР° %s. РџСЂРёС‡РёРЅР°: %s"):format(
+			cleanLabel(target, MAX_NAME_CHARACTERS), cleanLabel(duration, 40), cleanLabel(reason, 200)), BAN_COLOR)
 		return true
 	elseif action == "announce" then
 		sendPublicSystemMessage(tostring(target), typeof(duration) == "Color3" and duration or SYSTEM_COLOR)
@@ -1168,21 +1232,25 @@ adminChatControl.OnInvoke = function(action, target, duration, reason, extra)
 		clearChatForEveryone()
 		return true
 	end
-	if typeof(target) ~= "Instance" or not target:IsA("Player") then
-		return false, "Некорректный игрок"
+	if typeof(target) ~= "Instance" or not target:IsA("Player") or target.Parent ~= Players then
+		return false, "РќРµРєРѕСЂСЂРµРєС‚РЅС‹Р№ РёРіСЂРѕРє"
 	end
 	local state = getState(target.UserId)
 	if action == "mute" then
-		duration = math.floor(tonumber(duration) or 0)
-		if duration <= 0 then
-			return false, "Некорректное время мута"
+		duration = tonumber(duration) or 0
+		if duration ~= duration or duration <= 0 then
+			return false, "РќРµРєРѕСЂСЂРµРєС‚РЅРѕРµ РІСЂРµРјСЏ РјСѓС‚Р°"
 		end
-		reason = tostring(reason or "Решение администратора")
+		duration = math.min(math.floor(duration), MAX_ADMIN_MUTE_SECONDS)
+		if duration <= 0 then
+			return false, "РќРµРєРѕСЂСЂРµРєС‚РЅРѕРµ РІСЂРµРјСЏ РјСѓС‚Р°"
+		end
+		reason = cleanLabel(reason or "Р РµС€РµРЅРёРµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°", 200)
 		local expiresAt = os.time() + duration
 		local saved = pcall(function()
 			adminMuteStore:SetAsync(tostring(target.UserId), {expiresAt = expiresAt, reason = reason})
 		end)
-		applyAdminMute(target, state, expiresAt, reason, extra and tostring(extra) or nil)
+		applyAdminMute(target, state, expiresAt, reason, extra and cleanLabel(extra, 60) or nil)
 		removeFloodMessages(target.UserId, os.clock())
 		return true, saved
 	elseif action == "unmute" then
@@ -1196,7 +1264,7 @@ adminChatControl.OnInvoke = function(action, target, duration, reason, extra)
 			adminMuteStore:RemoveAsync(tostring(target.UserId))
 		end)
 		updateMuteAttribute(target, nil)
-		sendSystemMessage(target, "Администратор снял с вас мут.", MUTE_COLOR)
+		sendSystemMessage(target, "РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂ СЃРЅСЏР» СЃ РІР°СЃ РјСѓС‚.", MUTE_COLOR)
 		return true, removed
 	elseif action == "muteInfo" then
 		local remaining, muteReason = getMuteInfo(state, os.clock())
@@ -1205,7 +1273,7 @@ adminChatControl.OnInvoke = function(action, target, duration, reason, extra)
 		removeFloodMessages(target.UserId, os.clock())
 		return true
 	end
-	return false, "Неизвестное действие"
+	return false, "РќРµРёР·РІРµСЃС‚РЅРѕРµ РґРµР№СЃС‚РІРёРµ"
 end
 
 local function handleMessage(sender, raw)
@@ -1214,7 +1282,7 @@ local function handleMessage(sender, raw)
 	end
 	if typeof(raw) ~= "string" or #raw == 0 or #raw > MAX_RAW_BYTES then
 		AntiCheat.ReportExploit(sender, AntiCheat.Codes.InvalidRemoteData,
-			("SendMessageEvent: %s / %d байт"):format(typeof(raw), typeof(raw) == "string" and #raw or 0))
+			("SendMessageEvent: %s / %d Р±Р°Р№С‚"):format(typeof(raw), typeof(raw) == "string" and #raw or 0))
 		return
 	end
 	if not AntiCheat.CheckRemote(sender, "chat", 3, 6) then
@@ -1237,23 +1305,23 @@ local function handleMessage(sender, raw)
 		return
 	end
 	if characterCount > MAX_CHARACTERS then
-		sendWarning(sender, state, ("Сообщение слишком длинное (максимум %d символов)."):format(MAX_CHARACTERS))
+		sendWarning(sender, state, ("РЎРѕРѕР±С‰РµРЅРёРµ СЃР»РёС€РєРѕРј РґР»РёРЅРЅРѕРµ (РјР°РєСЃРёРјСѓРј %d СЃРёРјРІРѕР»РѕРІ)."):format(MAX_CHARACTERS))
 		return
 	end
 
 	local muteRemaining, muteReason = getMuteInfo(state, now)
 	if muteRemaining then
-		sendWarning(sender, state, ("Ты в муте ещё %d сек.%s"):format(muteRemaining, muteReason and (" Причина: " .. muteReason .. ".") or ""), MUTE_COLOR)
+		sendWarning(sender, state, ("РўС‹ РІ РјСѓС‚Рµ РµС‰С‘ %d СЃРµРє.%s"):format(muteRemaining, muteReason and (" РџСЂРёС‡РёРЅР°: " .. muteReason .. ".") or ""), MUTE_COLOR)
 		return
 	end
 
 	if now < state.filterBackoffUntil then
-		sendWarning(sender, state, ("Фильтр Roblox временно скрывает твои сообщения. Подожди %d сек."):format(math.ceil(state.filterBackoffUntil - now)), MUTE_COLOR)
+		sendWarning(sender, state, ("Р¤РёР»СЊС‚СЂ Roblox РІСЂРµРјРµРЅРЅРѕ СЃРєСЂС‹РІР°РµС‚ С‚РІРѕРё СЃРѕРѕР±С‰РµРЅРёСЏ. РџРѕРґРѕР¶РґРё %d СЃРµРє."):format(math.ceil(state.filterBackoffUntil - now)), MUTE_COLOR)
 		return
 	end
 
 	if containsForbiddenContact(text) then
-		registerViolation(sender, state, "ссылки, контакты и номера запрещены", 2)
+		registerViolation(sender, state, "СЃСЃС‹Р»РєРё, РєРѕРЅС‚Р°РєС‚С‹ Рё РЅРѕРјРµСЂР° Р·Р°РїСЂРµС‰РµРЅС‹", 2)
 		return
 	end
 
@@ -1262,7 +1330,7 @@ local function handleMessage(sender, raw)
 	local refillRate = BASE_TOKENS_PER_SECOND + TRUST_TOKENS_BONUS * state.trust
 	state.tokens = math.min(TOKEN_CAPACITY, state.tokens + elapsed * refillRate)
 	if state.tokens < 1 then
-		addStrikes(sender, state, 0.5, "флуд", "Слишком быстро! Не долби чат — получишь мут.")
+		addStrikes(sender, state, 0.5, "С„Р»СѓРґ", "РЎР»РёС€РєРѕРј Р±С‹СЃС‚СЂРѕ! РќРµ РґРѕР»Р±Рё С‡Р°С‚ вЂ” РїРѕР»СѓС‡РёС€СЊ РјСѓС‚.")
 		return
 	end
 	state.tokens -= 1
@@ -1276,11 +1344,11 @@ local function handleMessage(sender, raw)
 	state.sentTimes = recent
 
 	if #recent + 1 >= RATE_HARD_LIMIT then
-		mutePlayer(sender, state, "флуд")
+		mutePlayer(sender, state, "С„Р»СѓРґ")
 		return
 	end
 	if #recent + 1 >= RATE_SOFT_LIMIT then
-		addStrikes(sender, state, 1, "флуд", "Ты пишешь слишком часто. Сбавь темп, иначе мут.")
+		addStrikes(sender, state, 1, "С„Р»СѓРґ", "РўС‹ РїРёС€РµС€СЊ СЃР»РёС€РєРѕРј С‡Р°СЃС‚Рѕ. РЎР±Р°РІСЊ С‚РµРјРї, РёРЅР°С‡Рµ РјСѓС‚.")
 		return
 	end
 	table.insert(state.sentTimes, now)
@@ -1294,11 +1362,11 @@ local function handleMessage(sender, raw)
 	end
 
 	if score >= BLOCK_SCORE then
-		registerViolation(sender, state, reason or "спам", score >= HARD_SCORE and 2 or 1.25)
+		registerViolation(sender, state, reason or "СЃРїР°Рј", score >= HARD_SCORE and 2 or 1.25)
 		return
 	end
 	if score >= WATCH_SCORE then
-		if addStrikes(sender, state, 0.3, "подозрительная активность в чате", nil) then
+		if addStrikes(sender, state, 0.3, "РїРѕРґРѕР·СЂРёС‚РµР»СЊРЅР°СЏ Р°РєС‚РёРІРЅРѕСЃС‚СЊ РІ С‡Р°С‚Рµ", nil) then
 			return
 		end
 	elseif score < 0.2 then
@@ -1330,7 +1398,7 @@ local function hookPlayer(player)
 			local remaining, reason = getMuteInfo(state, os.clock())
 			if remaining then
 				updateMuteAttribute(player, remaining)
-				sendSystemMessage(player, ("Ты всё ещё в муте: %d сек.%s"):format(remaining, reason and (" Причина: " .. reason .. ".") or ""), MUTE_COLOR)
+				sendSystemMessage(player, ("РўС‹ РІСЃС‘ РµС‰С‘ РІ РјСѓС‚Рµ: %d СЃРµРє.%s"):format(remaining, reason and (" РџСЂРёС‡РёРЅР°: " .. reason .. ".") or ""), MUTE_COLOR)
 				scheduleUnmuteNotice(player, state, remaining)
 			end
 		end)

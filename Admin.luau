@@ -10,21 +10,31 @@ local CONFIG = {
 		8601251212
 	},
 
-	AutoOwnerAdmin = true,  -- владелец игры / группы — админ автоматически
-	GroupAdminRank = 255,   -- для групповых игр: ранг в группе >= этого = админ
-	AllowInStudio = true,   -- в Studio все админы (удобно тестировать)
+	AutoOwnerAdmin = true,  -- РІР»Р°РґРµР»РµС† РёРіСЂС‹ / РіСЂСѓРїРїС‹ вЂ” Р°РґРјРёРЅ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё
+	GroupAdminRank = 255,   -- РґР»СЏ РіСЂСѓРїРїРѕРІС‹С… РёРіСЂ: СЂР°РЅРі РІ РіСЂСѓРїРїРµ >= СЌС‚РѕРіРѕ = Р°РґРјРёРЅ
+	AllowInStudio = true,   -- РІ Studio РІСЃРµ Р°РґРјРёРЅС‹ (СѓРґРѕР±РЅРѕ С‚РµСЃС‚РёСЂРѕРІР°С‚СЊ)
 
-	BanApplyToUniverse = true, -- бан во всех плейсах вселенной
-	BanExcludeAlts = false,    -- false = баним и альт-аккаунты тоже
-	DefaultBanReason = "Нарушение правил",
-	DefaultKickReason = "Кикнут администратором",
+	-- require/rq РёСЃРїРѕР»РЅСЏРµС‚ РїСЂРѕРёР·РІРѕР»СЊРЅС‹Р№ СЃРµСЂРІРµСЂРЅС‹Р№ РєРѕРґ РїРѕ asset id.
+	-- Р’С‹РєР»СЋС‡РµРЅРѕ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ; РґР°Р¶Рµ РІРєР»СЋС‡С‘РЅРЅРѕРµ РґРѕСЃС‚СѓРїРЅРѕ С‚РѕР»СЊРєРѕ РІР»Р°РґРµР»СЊС†Сѓ Рё Р°РґРјРёРЅР°Рј РёР· Admins.
+	AllowRequireCommand = false,
 
-	AnnounceTime = 5,          -- сколько секунд висит объявление
+	BanApplyToUniverse = true, -- Р±Р°РЅ РІРѕ РІСЃРµС… РїР»РµР№СЃР°С… РІСЃРµР»РµРЅРЅРѕР№
+	BanExcludeAlts = false,    -- false = Р±Р°РЅРёРј Рё Р°Р»СЊС‚-Р°РєРєР°СѓРЅС‚С‹ С‚РѕР¶Рµ
+	DefaultBanReason = "РќР°СЂСѓС€РµРЅРёРµ РїСЂР°РІРёР»",
+	DefaultKickReason = "РљРёРєРЅСѓС‚ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂРѕРј",
+
+	AnnounceTime = 5,          -- СЃРєРѕР»СЊРєРѕ СЃРµРєСѓРЅРґ РІРёСЃРёС‚ РѕР±СЉСЏРІР»РµРЅРёРµ
 	DefaultFlySpeed = 60,
+
+	MaxInputLength = 300,      -- РјР°РєСЃ. РґР»РёРЅР° СЃС‚СЂРѕРєРё РєРѕРјР°РЅРґС‹ РѕС‚ РєР»РёРµРЅС‚Р°
+	MaxReasonLength = 200,     -- РјР°РєСЃ. РґР»РёРЅР° РїСЂРёС‡РёРЅС‹ / С‚РµРєСЃС‚Р° РѕР±СЉСЏРІР»РµРЅРёСЏ
+	MaxTagLength = 32,
+	MaxDurationSeconds = 315360000, -- 10 Р»РµС‚
+	MaxCoins = 1000000000,
 }
 
 --------------------------------------------------------------------------------
--- Ремоуты
+-- Р РµРјРѕСѓС‚С‹
 --------------------------------------------------------------------------------
 
 local remotes = Instance.new("Folder")
@@ -53,47 +63,118 @@ isAdminRF.Parent = remotes
 remotes.Parent = ReplicatedStorage
 
 --------------------------------------------------------------------------------
--- Права
+-- РџСЂР°РІР°
 --------------------------------------------------------------------------------
 
-local adminCache = {}
+-- РЈСЂРѕРІРЅРё: 0 = РЅРµ Р°РґРјРёРЅ, 1 = Р°РґРјРёРЅ, 2 = Р°РґРјРёРЅ РёР· CONFIG.Admins, 3 = РІР»Р°РґРµР»РµС†
+local LEVEL_OWNER = 3
+local LEVEL_TRUSTED = 2
 
-local function isAdmin(player)
+local adminCache = {}     -- [player] = level
+local adminFailedAt = {}  -- [player] = os.clock() РЅРµСѓРґР°С‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё РіСЂСѓРїРїС‹ (РїРѕРІС‚РѕСЂ РЅРµ С‡Р°С‰Рµ СЂР°Р·Р° РІ 15СЃ)
+
+local function levelOfUserId(userId)
+	if CONFIG.AutoOwnerAdmin and game.CreatorType == Enum.CreatorType.User and userId == game.CreatorId then
+		return LEVEL_OWNER
+	end
+	if table.find(CONFIG.Admins, userId) then
+		return LEVEL_TRUSTED
+	end
+	return 0
+end
+
+local function getLevel(player)
 	local cached = adminCache[player]
 	if cached ~= nil then
 		return cached
 	end
+	local failedAt = adminFailedAt[player]
+	if failedAt and os.clock() - failedAt < 15 then
+		return 0
+	end
 
-	local result = false
-	if table.find(CONFIG.Admins, player.UserId) then
-		result = true
-	elseif CONFIG.AllowInStudio and RunService:IsStudio() then
-		result = true
-	elseif CONFIG.AutoOwnerAdmin then
-		if game.CreatorType == Enum.CreatorType.User then
-			result = player.UserId == game.CreatorId
+	local level = levelOfUserId(player.UserId)
+	if level < LEVEL_TRUSTED and CONFIG.AutoOwnerAdmin and game.CreatorType ~= Enum.CreatorType.User then
+		local ok, rank = pcall(player.GetRankInGroup, player, game.CreatorId)
+		if ok and type(rank) == "number" then
+			if rank == 255 then
+				level = LEVEL_OWNER
+			elseif rank >= CONFIG.GroupAdminRank then
+				level = math.max(level, 1)
+			end
 		else
-			local ok, rank = pcall(player.GetRankInGroup, player, game.CreatorId)
-			result = ok and type(rank) == "number" and rank >= CONFIG.GroupAdminRank
+			adminFailedAt[player] = os.clock()
+			return 0
 		end
 	end
+	if level == 0 and CONFIG.AllowInStudio and RunService:IsStudio() then
+		level = 1
+	end
 
-	adminCache[player] = result
-	if result then
+	-- РёРіСЂРѕРє РјРѕРі РІС‹Р№С‚Рё, РїРѕРєР° С€Р»Р° РїСЂРѕРІРµСЂРєР°
+	if player.Parent ~= Players then
+		return level
+	end
+	adminCache[player] = level
+	adminFailedAt[player] = nil
+	if level > 0 then
 		AntiCheat.SetExempt(player, true)
 	end
-	return result
+	return level
+end
+
+local function isAdmin(player)
+	return getLevel(player) > 0
+end
+
+--------------------------------------------------------------------------------
+-- РђРЅС‚РёСЃРїР°Рј: token bucket РЅР° РёРіСЂРѕРєР°
+--------------------------------------------------------------------------------
+
+local buckets = {} -- [player] = { tokens, last }
+local BUCKET_MAX, BUCKET_REFILL = 6, 2 -- Р·Р°РїР°СЃ Рё С‚РѕРєРµРЅРѕРІ РІ СЃРµРєСѓРЅРґСѓ
+
+local function allowRequest(player)
+	local now = os.clock()
+	local b = buckets[player]
+	if not b then
+		b = { tokens = BUCKET_MAX, last = now }
+		buckets[player] = b
+	end
+	b.tokens = math.min(BUCKET_MAX, b.tokens + (now - b.last) * BUCKET_REFILL)
+	b.last = now
+	if b.tokens < 1 then
+		return false
+	end
+	b.tokens -= 1
+	return true
 end
 
 isAdminRF.OnServerInvoke = function(player)
-	return isAdmin(player)
+	if not allowRequest(player) then
+		return false
+	end
+	return isAdmin(player) == true
 end
 
 --------------------------------------------------------------------------------
--- Утилиты
+-- РЈС‚РёР»РёС‚С‹
 --------------------------------------------------------------------------------
 
+-- РѕР±СЂРµР·РєР° РїРѕ СЃРёРјРІРѕР»Р°Рј UTF-8
+local function clip(text, maxChars)
+	local len = utf8.len(text)
+	if len and len > maxChars then
+		return text:sub(1, utf8.offset(text, maxChars + 1) - 1)
+	end
+	return text
+end
+
 local function reply(player, text, kind)
+	if player.Parent ~= Players then
+		return
+	end
+	text = clip(tostring(text), 1000)
 	local chatScript = ServerScriptService:FindFirstChild("SendMessage")
 	local privateMessage = chatScript and chatScript:FindFirstChild("PrivateSystemMessage")
 	if privateMessage then
@@ -113,10 +194,18 @@ local function getTagControl()
 	return tagScript and tagScript:FindFirstChild("AdminTagControl")
 end
 
-local function filterAdminReason(sender, text)
+-- BindableFunction:Invoke РјРѕР¶РµС‚ СѓРїР°СЃС‚СЊ РёР»Рё Р·Р°РІРёСЃРЅСѓС‚СЊ РЅР° С‡СѓР¶РѕР№ РѕС€РёР±РєРµ вЂ” РѕР±РѕСЂР°С‡РёРІР°РµРј
+local function invoke(control, ...)
+	return pcall(control.Invoke, control, ...)
+end
+
+-- РўРµРєСЃС‚, РєРѕС‚РѕСЂС‹Р№ СѓРІРёРґСЏС‚ РґСЂСѓРіРёРµ РёРіСЂРѕРєРё, РѕР±СЏР·Р°РЅ РїСЂРѕР№С‚Рё С„РёР»СЊС‚СЂ Roblox.
+-- РџСЂРё СЃР±РѕРµ С„РёР»СЊС‚СЂР° РІРѕР·РІСЂР°С‰Р°РµРј fallback (nil = РѕС‚РєР°Р·).
+local function filterText(sender, text, fallback)
+	text = clip(tostring(text), CONFIG.MaxReasonLength)
 	local ok, filtered = pcall(function()
 		local result = TextService:FilterStringAsync(
-			tostring(text),
+			text,
 			sender.UserId,
 			Enum.TextFilterContext.PublicChat
 		)
@@ -125,7 +214,23 @@ local function filterAdminReason(sender, text)
 	if ok and type(filtered) == "string" and filtered ~= "" then
 		return filtered
 	end
-	return CONFIG.DefaultBanReason
+	return fallback
+end
+
+local function filterAdminReason(sender, text)
+	return filterText(sender, text, CONFIG.DefaultBanReason)
+end
+
+-- С‡РёСЃР»Рѕ РёР· С‚РѕРєРµРЅР°: Р±РµР· NaN/inf/hex, РІ РїСЂРµРґРµР»Р°С… [min, max]
+local function parseNumber(token, min, max)
+	if type(token) ~= "string" or not token:match("^%-?%d+%.?%d*$") then
+		return nil
+	end
+	local n = tonumber(token)
+	if not n or n ~= n or n == math.huge or n == -math.huge then
+		return nil
+	end
+	return math.clamp(n, min, max)
 end
 
 local function pardon(player, seconds)
@@ -142,19 +247,21 @@ local function getCharParts(player)
 	return char, humanoid, root
 end
 
--- поиск игрока по нику/DisplayName (точное имя > точный дисплейнейм/префикс)
+-- РїРѕРёСЃРє РёРіСЂРѕРєР° РїРѕ РЅРёРєСѓ/DisplayName (С‚РѕС‡РЅРѕРµ РёРјСЏ > С‚РѕС‡РЅС‹Р№ РґРёСЃРїР»РµР№РЅРµР№Рј/РїСЂРµС„РёРєСЃ)
 local function findPlayers(nameToken)
-	nameToken = nameToken:lower()
+	local needle = nameToken:lower()
+	local needleLen = string.len(needle)
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p.Name:lower() == nameToken then
+		if p.Name:lower() == needle then
 			return { p }
 		end
 	end
 	local matches = {}
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p.DisplayName:lower() == nameToken
-			or p.Name:lower():sub(1, #nameToken) == nameToken
-			or p.DisplayName:lower():sub(1, #nameToken) == nameToken
+		local display = p.DisplayName:lower()
+		if display == needle
+			or p.Name:lower():sub(1, needleLen) == needle
+			or display:sub(1, needleLen) == needle
 		then
 			table.insert(matches, p)
 		end
@@ -162,10 +269,12 @@ local function findPlayers(nameToken)
 	return matches
 end
 
--- me / all / others / ники через запятую
-local function resolveTargets(sender, token)
-	if not token then
-		return nil, "Укажи игрока: me / all / others / часть ника (можно через запятую)"
+-- me / all / others / РЅРёРєРё С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ.
+-- harmful = true: С†РµР»Рё СЃ СѓСЂРѕРІРЅРµРј РІС‹С€Рµ, С‡РµРј Сѓ РѕС‚РїСЂР°РІРёС‚РµР»СЏ, РїСЂРѕРїСѓСЃРєР°СЋС‚СЃСЏ.
+-- РўСЂРµС‚СЊРµ Р·РЅР°С‡РµРЅРёРµ: true, РµСЃР»Рё РЅРёРє РїСЂРѕСЃС‚Рѕ РЅРµ РЅР°Р№РґРµРЅ (РґР»СЏ РѕС„Р»Р°Р№РЅ-Р±Р°РЅР°).
+local function resolveTargets(sender, token, harmful)
+	if type(token) ~= "string" or token == "" then
+		return nil, "РЈРєР°Р¶Рё РёРіСЂРѕРєР°: me / all / others / С‡Р°СЃС‚СЊ РЅРёРєР° (РјРѕР¶РЅРѕ С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ)"
 	end
 	local set, list = {}, {}
 	local function add(p)
@@ -175,15 +284,15 @@ local function resolveTargets(sender, token)
 		end
 	end
 
-	for part in token:gmatch("[^,]+") do
-		part = part:lower()
-		if part == "me" or part == "я" then
+	for rawPart in token:gmatch("[^,]+") do
+		local part = rawPart:lower()
+		if part == "me" or part == "СЏ" then
 			add(sender)
-		elseif part == "all" or part == "все" then
+		elseif part == "all" or part == "РІСЃРµ" then
 			for _, p in ipairs(Players:GetPlayers()) do
 				add(p)
 			end
-		elseif part == "others" or part == "другие" then
+		elseif part == "others" or part == "РґСЂСѓРіРёРµ" then
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= sender then
 					add(p)
@@ -192,21 +301,34 @@ local function resolveTargets(sender, token)
 		else
 			local matches = findPlayers(part)
 			if #matches == 0 then
-				return nil, ("Игрок «%s» не найден"):format(part)
+				return nil, ("РРіСЂРѕРє В«%sВ» РЅРµ РЅР°Р№РґРµРЅ"):format(clip(rawPart, 32)), true
 			elseif #matches > 1 then
 				local names = {}
 				for _, m in ipairs(matches) do
 					table.insert(names, m.Name)
 				end
-				return nil, ("«%s» подходит нескольким: %s — уточни ник"):format(part, table.concat(names, ", "))
+				return nil, ("В«%sВ» РїРѕРґС…РѕРґРёС‚ РЅРµСЃРєРѕР»СЊРєРёРј: %s вЂ” СѓС‚РѕС‡РЅРё РЅРёРє"):format(clip(rawPart, 32), table.concat(names, ", "))
 			else
 				add(matches[1])
 			end
 		end
 	end
 
+	if harmful then
+		local senderLevel = getLevel(sender)
+		local allowed = {}
+		for _, p in ipairs(list) do
+			if p == sender or getLevel(p) <= senderLevel then
+				table.insert(allowed, p)
+			else
+				reply(sender, ("РќРµР»СЊР·СЏ РїСЂРёРјРµРЅСЏС‚СЊ Рє %s вЂ” Сѓ РЅРµРіРѕ РІС‹С€Рµ РїСЂР°РІР°, РїСЂРѕРїСѓСЃРєР°СЋ"):format(p.Name), "err")
+			end
+		end
+		list = allowed
+	end
+
 	if #list == 0 then
-		return nil, "Никого не найдено"
+		return nil, "РќРёРєРѕРіРѕ РЅРµ РЅР°Р№РґРµРЅРѕ"
 	end
 	return list
 end
@@ -219,10 +341,10 @@ local function namesOf(players)
 	return table.concat(t, ", ")
 end
 
--- 30s / 10m / 2h / 7d / 1w / perm; число без буквы = минуты
+-- 30s / 10m / 2h / 7d / 1w / perm; С‡РёСЃР»Рѕ Р±РµР· Р±СѓРєРІС‹ = РјРёРЅСѓС‚С‹
 local function parseDuration(s)
 	s = s:lower()
-	if s == "perm" or s == "forever" or s == "навсегда" or s == "-1" then
+	if s == "perm" or s == "forever" or s == "РЅР°РІСЃРµРіРґР°" or s == "-1" then
 		return -1
 	end
 	local num, suffix = s:match("^(%d+%.?%d*)([smhdw]?)$")
@@ -230,17 +352,24 @@ local function parseDuration(s)
 		return nil
 	end
 	local mult = ({ s = 1, m = 60, h = 3600, d = 86400, w = 604800 })[suffix ~= "" and suffix or "m"]
-	return math.floor(tonumber(num) * mult)
+	local seconds = tonumber(num) * mult
+	if seconds ~= seconds or seconds < 1 or seconds > CONFIG.MaxDurationSeconds then
+		return nil
+	end
+	return math.floor(seconds)
 end
 
 --------------------------------------------------------------------------------
--- Fly / Noclip: сервер решает, кому можно, клиент двигает.
--- Пока режим включён — ставим AntiCheatExempt, чтобы античит не резинил.
+-- Fly / Noclip: СЃРµСЂРІРµСЂ СЂРµС€Р°РµС‚, РєРѕРјСѓ РјРѕР¶РЅРѕ, РєР»РёРµРЅС‚ РґРІРёРіР°РµС‚.
+-- РџРѕРєР° СЂРµР¶РёРј РІРєР»СЋС‡С‘РЅ вЂ” СЃС‚Р°РІРёРј AntiCheatExempt, С‡С‚РѕР±С‹ Р°РЅС‚РёС‡РёС‚ РЅРµ СЂРµР·РёРЅРёР».
 --------------------------------------------------------------------------------
 
 local clientModes = {} -- [player] = { fly = bool, noclip = bool }
 
 local function setMode(player, mode, enabled, extra)
+	if player.Parent ~= Players then
+		return
+	end
 	local m = clientModes[player]
 	if not m then
 		m = {}
@@ -249,18 +378,18 @@ local function setMode(player, mode, enabled, extra)
 	m[mode] = enabled
 	if m.fly or m.noclip then
 		player:SetAttribute("AC_Exempt", true)
-	else
+	elseif not adminCache[player] or adminCache[player] <= 0 then
 		player:SetAttribute("AC_Exempt", nil)
 	end
 	actRemote:FireClient(player, mode, enabled, extra)
 end
 
 --------------------------------------------------------------------------------
--- Команды
+-- РљРѕРјР°РЅРґС‹
 --------------------------------------------------------------------------------
 
-local Commands = {}   -- имя/алиас -> команда
-local Ordered = {}    -- для help
+local Commands = {}   -- РёРјСЏ/Р°Р»РёР°СЃ -> РєРѕРјР°РЅРґР°
+local Ordered = {}    -- РґР»СЏ help
 
 local function register(names, usage, desc, fn)
 	local cmd = { name = names[1], usage = usage, desc = desc, fn = fn }
@@ -270,25 +399,25 @@ local function register(names, usage, desc, fn)
 	end
 end
 
-register({ "help", "cmds", "команды" }, "", "список команд", function(sender, args)
-	local lines = { "===== Админ-команды (вводи в чат с ;) =====" }
+register({ "help", "cmds", "РєРѕРјР°РЅРґС‹" }, "", "СЃРїРёСЃРѕРє РєРѕРјР°РЅРґ", function(sender, args)
+	local lines = { "===== РђРґРјРёРЅ-РєРѕРјР°РЅРґС‹ (РІРІРѕРґРё РІ С‡Р°С‚ СЃ ;) =====" }
 	for _, cmd in ipairs(Ordered) do
-		table.insert(lines, ("%s %s — %s"):format(cmd.name, cmd.usage, cmd.desc))
+		table.insert(lines, ("%s %s вЂ” %s"):format(cmd.name, cmd.usage, cmd.desc))
 	end
-	table.insert(lines, "clear — очистить консоль (локально)")
-	table.insert(lines, "Время бана: 30s, 10m, 2h, 7d, 1w, perm (число без буквы = минуты)")
-	table.insert(lines, "Игроки: me / all / others / часть ника, можно списком через запятую")
+	table.insert(lines, "clear вЂ” РѕС‡РёСЃС‚РёС‚СЊ РєРѕРЅСЃРѕР»СЊ (Р»РѕРєР°Р»СЊРЅРѕ)")
+	table.insert(lines, "Р’СЂРµРјСЏ Р±Р°РЅР°: 30s, 10m, 2h, 7d, 1w, perm (С‡РёСЃР»Рѕ Р±РµР· Р±СѓРєРІС‹ = РјРёРЅСѓС‚С‹)")
+	table.insert(lines, "РРіСЂРѕРєРё: me / all / others / С‡Р°СЃС‚СЊ РЅРёРєР°, РјРѕР¶РЅРѕ СЃРїРёСЃРєРѕРј С‡РµСЂРµР· Р·Р°РїСЏС‚СѓСЋ")
 	return table.concat(lines, "\n")
 end)
 
-register({ "ban", "бан" }, "<игрок> <время|perm> [причина]", "забанить (BanAsync, работает и офлайн по нику)", function(sender, args)
+register({ "ban", "Р±Р°РЅ" }, "<РёРіСЂРѕРє> <РІСЂРµРјСЏ|perm> [РїСЂРёС‡РёРЅР°]", "Р·Р°Р±Р°РЅРёС‚СЊ (BanAsync, СЂР°Р±РѕС‚Р°РµС‚ Рё РѕС„Р»Р°Р№РЅ РїРѕ РЅРёРєСѓ)", function(sender, args)
 	local targetToken, durToken = args[1], args[2]
 	if not targetToken or not durToken then
-		return nil, "Использование: ban <игрок> <время|perm> [причина]"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: ban <РёРіСЂРѕРє> <РІСЂРµРјСЏ|perm> [РїСЂРёС‡РёРЅР°]"
 	end
 	local duration = parseDuration(durToken)
 	if not duration then
-		return nil, ("Не понял время «%s». Примеры: 30s, 10m, 2h, 7d, perm (число = минуты)"):format(durToken)
+		return nil, ("РќРµ РїРѕРЅСЏР» РІСЂРµРјСЏ В«%sВ». РџСЂРёРјРµСЂС‹: 30s, 10m, 2h, 7d, perm (С‡РёСЃР»Рѕ = РјРёРЅСѓС‚С‹)"):format(clip(durToken, 32))
 	end
 	local reason = table.concat(args, " ", 3)
 	if reason == "" then
@@ -296,69 +425,87 @@ register({ "ban", "бан" }, "<игрок> <время|perm> [причина]", "забанить (BanAsync
 	end
 
 	local userIds, shown = {}, {}
-	local targets = resolveTargets(sender, targetToken)
+	local targets, err, notFound = resolveTargets(sender, targetToken, true)
 	if targets then
 		for _, p in ipairs(targets) do
 			if p == sender then
-				reply(sender, "Себя банить нельзя — пропускаю", "err")
+				reply(sender, "РЎРµР±СЏ Р±Р°РЅРёС‚СЊ РЅРµР»СЊР·СЏ вЂ” РїСЂРѕРїСѓСЃРєР°СЋ", "err")
 			else
 				table.insert(userIds, p.UserId)
 				table.insert(shown, p.Name)
 			end
 		end
-	elseif not targetToken:find(",") then
-		-- игрока нет на сервере — офлайн-бан по нику
-		local ok, id = pcall(Players.GetUserIdFromNameAsync, Players, targetToken)
-		if ok and type(id) == "number" then
-			table.insert(userIds, id)
-			table.insert(shown, targetToken .. " (офлайн)")
-		else
-			return nil, ("Игрок «%s» не найден ни на сервере, ни в Roblox"):format(targetToken)
+	elseif notFound and not targetToken:find(",") then
+		-- РёРіСЂРѕРєР° РЅРµС‚ РЅР° СЃРµСЂРІРµСЂРµ вЂ” РѕС„Р»Р°Р№РЅ-Р±Р°РЅ РїРѕ РЅРёРєСѓ
+		if not targetToken:match("^[%w_]+$") or #targetToken > 20 then
+			return nil, ("РРіСЂРѕРє В«%sВ» РЅРµ РЅР°Р№РґРµРЅ"):format(clip(targetToken, 32))
 		end
+		local ok, id = pcall(Players.GetUserIdFromNameAsync, Players, targetToken)
+		if not (ok and type(id) == "number") then
+			return nil, ("РРіСЂРѕРє В«%sВ» РЅРµ РЅР°Р№РґРµРЅ РЅРё РЅР° СЃРµСЂРІРµСЂРµ, РЅРё РІ Roblox"):format(targetToken)
+		end
+		if id == sender.UserId then
+			return nil, "РЎРµР±СЏ Р±Р°РЅРёС‚СЊ РЅРµР»СЊР·СЏ"
+		end
+		if levelOfUserId(id) > getLevel(sender) then
+			return nil, "РќРµР»СЊР·СЏ Р±Р°РЅРёС‚СЊ РёРіСЂРѕРєР° СЃ Р±РѕР»РµРµ РІС‹СЃРѕРєРёРјРё РїСЂР°РІР°РјРё"
+		end
+		table.insert(userIds, id)
+		table.insert(shown, targetToken .. " (РѕС„Р»Р°Р№РЅ)")
 	else
-		local _, err = resolveTargets(sender, targetToken)
 		return nil, err
 	end
 
 	if #userIds == 0 then
-		return nil, "Некого банить"
+		return nil, "РќРµРєРѕРіРѕ Р±Р°РЅРёС‚СЊ"
 	end
 
-	local ok, err = pcall(function()
-		Players:BanAsync({
-			UserIds = userIds,
-			ApplyToUniverse = CONFIG.BanApplyToUniverse,
-			Duration = duration,
-			DisplayReason = reason,
-			PrivateReason = ("Забанил %s (%d) через админ-консоль"):format(sender.Name, sender.UserId),
-			ExcludeAltAccounts = CONFIG.BanExcludeAlts,
-		})
-	end)
-	if not ok then
-		return nil, "BanAsync не сработал: " .. tostring(err) .. " (в Studio баны не работают — только в опубликованной игре)"
-	end
-
-	local durText = duration == -1 and "навсегда" or durToken
+	-- РїСЂРёС‡РёРЅР° РїРѕРєР°Р·С‹РІР°РµС‚СЃСЏ Р·Р°Р±Р°РЅРµРЅРЅРѕРјСѓ, РїРѕСЌС‚РѕРјСѓ С„РёР»СЊС‚СЂСѓРµРј РґРѕ BanAsync
 	local filteredReason = filterAdminReason(sender, reason)
+	local privateReason = clip(("Р—Р°Р±Р°РЅРёР» %s (%d) С‡РµСЂРµР· Р°РґРјРёРЅ-РєРѕРЅСЃРѕР»СЊ"):format(sender.Name, sender.UserId), 900)
+
+	-- BanAsync РїСЂРёРЅРёРјР°РµС‚ РґРѕ 50 UserId Р·Р° РІС‹Р·РѕРІ
+	for i = 1, #userIds, 50 do
+		local chunk = table.move(userIds, i, math.min(i + 49, #userIds), 1, {})
+		local ok, banErr = pcall(function()
+			Players:BanAsync({
+				UserIds = chunk,
+				ApplyToUniverse = CONFIG.BanApplyToUniverse,
+				Duration = duration,
+				DisplayReason = filteredReason,
+				PrivateReason = privateReason,
+				ExcludeAltAccounts = CONFIG.BanExcludeAlts,
+			})
+		end)
+		if not ok then
+			return nil, "BanAsync РЅРµ СЃСЂР°Р±РѕС‚Р°Р»: " .. tostring(banErr) .. " (РІ Studio Р±Р°РЅС‹ РЅРµ СЂР°Р±РѕС‚Р°СЋС‚ вЂ” С‚РѕР»СЊРєРѕ РІ РѕРїСѓР±Р»РёРєРѕРІР°РЅРЅРѕР№ РёРіСЂРµ)"
+		end
+	end
+
+	local durText = duration == -1 and "РЅР°РІСЃРµРіРґР°" or durToken
 	local chatControl = getChatControl()
 	if chatControl then
-		chatControl:Invoke("announceBan", table.concat(shown, ", "), durText, filteredReason)
+		invoke(chatControl, "announceBan", table.concat(shown, ", "), durText, filteredReason)
 	end
-	return ("Забанил: %s | время: %s | причина: %s"):format(table.concat(shown, ", "), durText, filteredReason)
+	return ("Р—Р°Р±Р°РЅРёР»: %s | РІСЂРµРјСЏ: %s | РїСЂРёС‡РёРЅР°: %s"):format(table.concat(shown, ", "), durText, filteredReason)
 end)
 
-register({ "unban", "разбан" }, "<ник или UserId>", "снять бан (UnbanAsync)", function(sender, args)
+register({ "unban", "СЂР°Р·Р±Р°РЅ" }, "<РЅРёРє РёР»Рё UserId>", "СЃРЅСЏС‚СЊ Р±Р°РЅ (UnbanAsync)", function(sender, args)
 	local token = args[1]
 	if not token then
-		return nil, "Использование: unban <ник или UserId>"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: unban <РЅРёРє РёР»Рё UserId>"
 	end
-	local id = tonumber(token)
-	if not id then
+	local id
+	if token:match("^%d+$") and #token <= 15 then
+		id = tonumber(token)
+	elseif token:match("^[%w_]+$") and #token <= 20 then
 		local ok, resolved = pcall(Players.GetUserIdFromNameAsync, Players, token)
 		if not ok or type(resolved) ~= "number" then
-			return nil, ("Не нашёл игрока «%s»"):format(token)
+			return nil, ("РќРµ РЅР°С€С‘Р» РёРіСЂРѕРєР° В«%sВ»"):format(token)
 		end
 		id = resolved
+	else
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: unban <РЅРёРє РёР»Рё UserId>"
 	end
 	local ok, err = pcall(function()
 		Players:UnbanAsync({
@@ -367,34 +514,34 @@ register({ "unban", "разбан" }, "<ник или UserId>", "снять бан (UnbanAsync)", fu
 		})
 	end)
 	if not ok then
-		return nil, "UnbanAsync не сработал: " .. tostring(err)
+		return nil, "UnbanAsync РЅРµ СЃСЂР°Р±РѕС‚Р°Р»: " .. tostring(err)
 	end
-	return ("Разбанил %s (id %d)"):format(token, id)
+	return ("Р Р°Р·Р±Р°РЅРёР» %s (id %d)"):format(token, id)
 end)
 
-register({ "mute", "мут" }, "<игрок> <время> [причина]", "запретить писать в чат (30m, 3h, 6d)", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
+register({ "mute", "РјСѓС‚" }, "<РёРіСЂРѕРє> <РІСЂРµРјСЏ> [РїСЂРёС‡РёРЅР°]", "Р·Р°РїСЂРµС‚РёС‚СЊ РїРёСЃР°С‚СЊ РІ С‡Р°С‚ (30m, 3h, 6d)", function(sender, args)
+	local targets, err = resolveTargets(sender, args[1], true)
 	if not targets then
 		return nil, err
 	end
 	local duration = args[2] and parseDuration(args[2])
 	if not duration or duration <= 0 then
-		return nil, "Использование: mute <игрок> <30s|10m|3h|6d|1w> [причина]"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: mute <РёРіСЂРѕРє> <30s|10m|3h|6d|1w> [РїСЂРёС‡РёРЅР°]"
 	end
 	local reason = table.concat(args, " ", 3)
 	if reason == "" then
-		reason = "Решение администратора"
+		reason = "Р РµС€РµРЅРёРµ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°"
 	end
 	reason = filterAdminReason(sender, reason)
 	local control = getChatControl()
 	if not control then
-		return nil, "Система чата ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° С‡Р°С‚Р° РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
 	end
 	local muted = {}
 	local persistenceFailed = false
 	for _, target in ipairs(targets) do
-		local ok, saved = control:Invoke("mute", target, duration, reason, args[2])
-		if ok then
+		local called, ok, saved = invoke(control, "mute", target, duration, reason, args[2])
+		if called and ok then
 			table.insert(muted, target.Name)
 			if not saved then
 				persistenceFailed = true
@@ -402,104 +549,111 @@ register({ "mute", "мут" }, "<игрок> <время> [причина]", "запретить писать в чат
 		end
 	end
 	if #muted == 0 then
-		return nil, "Не удалось выдать мут"
+		return nil, "РќРµ СѓРґР°Р»РѕСЃСЊ РІС‹РґР°С‚СЊ РјСѓС‚"
 	end
-	local result = ("Выдал мут: %s | время: %s | причина: %s"):format(
+	local result = ("Р’С‹РґР°Р» РјСѓС‚: %s | РІСЂРµРјСЏ: %s | РїСЂРёС‡РёРЅР°: %s"):format(
 		table.concat(muted, ", "),
 		args[2],
 		reason
 	)
 	if persistenceFailed then
-		result ..= " | предупреждение: DataStore недоступен, мут действует в текущем сервере"
+		result ..= " | РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ: DataStore РЅРµРґРѕСЃС‚СѓРїРµРЅ, РјСѓС‚ РґРµР№СЃС‚РІСѓРµС‚ РІ С‚РµРєСѓС‰РµРј СЃРµСЂРІРµСЂРµ"
 	end
 	return result
 end)
 
-register({ "unmute", "размут" }, "<игрок>", "снять чат-мут", function(sender, args)
+register({ "unmute", "СЂР°Р·РјСѓС‚" }, "<РёРіСЂРѕРє>", "СЃРЅСЏС‚СЊ С‡Р°С‚-РјСѓС‚", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
 	local control = getChatControl()
 	if not control then
-		return nil, "Система чата ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° С‡Р°С‚Р° РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
 	end
 	for _, target in ipairs(targets) do
-		control:Invoke("unmute", target)
+		invoke(control, "unmute", target)
 	end
-	return "Снял мут: " .. namesOf(targets)
+	return "РЎРЅСЏР» РјСѓС‚: " .. namesOf(targets)
 end)
 
-register({ "tag", "тег" }, "<игрок> <стиль 1-10> <текст>", "выдать тег (1-5 обычные, 6-10 градиентные)", function(sender, args)
+register({ "tag", "С‚РµРі" }, "<РёРіСЂРѕРє> <СЃС‚РёР»СЊ 1-10> <С‚РµРєСЃС‚>", "РІС‹РґР°С‚СЊ С‚РµРі (1-5 РѕР±С‹С‡РЅС‹Рµ, 6-10 РіСЂР°РґРёРµРЅС‚РЅС‹Рµ)", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
-	local style = math.floor(tonumber(args[2]) or 0)
+	local style = math.floor(parseNumber(args[2], 0, 100) or 0)
 	if style < 1 or style > 10 then
-		return nil, "Использование: tag <игрок> <стиль 1-10> <текст тега>"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: tag <РёРіСЂРѕРє> <СЃС‚РёР»СЊ 1-10> <С‚РµРєСЃС‚ С‚РµРіР°>"
 	end
 	local text = table.concat(args, " ", 3)
 	if text == "" then
-		return nil, "Укажи текст тега"
+		return nil, "РЈРєР°Р¶Рё С‚РµРєСЃС‚ С‚РµРіР°"
 	end
+	text = clip(text, CONFIG.MaxTagLength)
 	local control = getTagControl()
 	if not control then
-		return nil, "Система тегов ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° С‚РµРіРѕРІ РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
+	end
+	text = filterText(sender, text)
+	if not text then
+		return nil, "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ С‚РµРєСЃС‚ С‚РµРіР° С„РёР»СЊС‚СЂРѕРј, РїРѕРїСЂРѕР±СѓР№ РїРѕР·Р¶Рµ"
 	end
 	local tagged = {}
 	for _, target in ipairs(targets) do
-		local ok, info = control:Invoke("set", sender, target, text, style)
-		if ok then
+		local called, ok, info = invoke(control, "set", sender, target, text, style)
+		if called and ok then
 			table.insert(tagged, target.Name)
 		else
-			return nil, tostring(info)
+			return nil, tostring(info or ok)
 		end
 	end
-	return ("Выдал тег [%s], стиль %d: %s"):format(text, style, table.concat(tagged, ", "))
+	return ("Р’С‹РґР°Р» С‚РµРі [%s], СЃС‚РёР»СЊ %d: %s"):format(text, style, table.concat(tagged, ", "))
 end)
 
-register({ "untag", "снятьтег" }, "<игрок>", "снять тег", function(sender, args)
+register({ "untag", "СЃРЅСЏС‚СЊС‚РµРі" }, "<РёРіСЂРѕРє>", "СЃРЅСЏС‚СЊ С‚РµРі", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
 	local control = getTagControl()
 	if not control then
-		return nil, "Система тегов ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° С‚РµРіРѕРІ РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
 	end
 	for _, target in ipairs(targets) do
-		control:Invoke("remove", sender, target)
+		invoke(control, "remove", sender, target)
 	end
-	return "Снял тег: " .. namesOf(targets)
+	return "РЎРЅСЏР» С‚РµРі: " .. namesOf(targets)
 end)
 
-register({ "kick", "кик" }, "<игрок> [причина]", "кикнуть с сервера", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
+register({ "kick", "РєРёРє" }, "<РёРіСЂРѕРє> [РїСЂРёС‡РёРЅР°]", "РєРёРєРЅСѓС‚СЊ СЃ СЃРµСЂРІРµСЂР°", function(sender, args)
+	local targets, err = resolveTargets(sender, args[1], true)
 	if not targets then
 		return nil, err
 	end
 	local reason = table.concat(args, " ", 2)
 	if reason == "" then
 		reason = CONFIG.DefaultKickReason
+	else
+		reason = filterText(sender, reason, CONFIG.DefaultKickReason)
 	end
 	local kicked = {}
 	for _, p in ipairs(targets) do
 		if p == sender then
-			reply(sender, "Себя кикать нельзя — пропускаю", "err")
+			reply(sender, "РЎРµР±СЏ РєРёРєР°С‚СЊ РЅРµР»СЊР·СЏ вЂ” РїСЂРѕРїСѓСЃРєР°СЋ", "err")
 		else
 			table.insert(kicked, p.Name)
 			pcall(p.Kick, p, reason)
 		end
 	end
 	if #kicked == 0 then
-		return nil, "Некого кикать"
+		return nil, "РќРµРєРѕРіРѕ РєРёРєР°С‚СЊ"
 	end
-	return ("Кикнул: %s (%s)"):format(table.concat(kicked, ", "), reason)
+	return ("РљРёРєРЅСѓР»: %s (%s)"):format(table.concat(kicked, ", "), reason)
 end)
 
-register({ "kill", "убить" }, "<игрок>", "убить", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
+register({ "kill", "СѓР±РёС‚СЊ" }, "<РёРіСЂРѕРє>", "СѓР±РёС‚СЊ", function(sender, args)
+	local targets, err = resolveTargets(sender, args[1], true)
 	if not targets then
 		return nil, err
 	end
@@ -509,10 +663,10 @@ register({ "kill", "убить" }, "<игрок>", "убить", function(sender, args)
 			humanoid.Health = 0
 		end
 	end
-	return "Убил: " .. namesOf(targets)
+	return "РЈР±РёР»: " .. namesOf(targets)
 end)
 
-register({ "heal", "хил" }, "<игрок>", "полное здоровье", function(sender, args)
+register({ "heal", "С…РёР»" }, "<РёРіСЂРѕРє>", "РїРѕР»РЅРѕРµ Р·РґРѕСЂРѕРІСЊРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
@@ -523,10 +677,10 @@ register({ "heal", "хил" }, "<игрок>", "полное здоровье", function(sender, args)
 			humanoid.Health = humanoid.MaxHealth
 		end
 	end
-	return "Вылечил: " .. namesOf(targets)
+	return "Р’С‹Р»РµС‡РёР»: " .. namesOf(targets)
 end)
 
-register({ "god", "год" }, "<игрок>", "бессмертие", function(sender, args)
+register({ "god", "РіРѕРґ" }, "<РёРіСЂРѕРє>", "Р±РµСЃСЃРјРµСЂС‚РёРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
@@ -538,10 +692,10 @@ register({ "god", "год" }, "<игрок>", "бессмертие", function(sender, args)
 			humanoid.Health = math.huge
 		end
 	end
-	return "Год-мод: " .. namesOf(targets)
+	return "Р“РѕРґ-РјРѕРґ: " .. namesOf(targets)
 end)
 
-register({ "ungod", "унгод" }, "<игрок>", "убрать бессмертие", function(sender, args)
+register({ "ungod", "СѓРЅРіРѕРґ" }, "<РёРіСЂРѕРє>", "СѓР±СЂР°С‚СЊ Р±РµСЃСЃРјРµСЂС‚РёРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
@@ -553,17 +707,17 @@ register({ "ungod", "унгод" }, "<игрок>", "убрать бессмертие", function(sender, 
 			humanoid.Health = 100
 		end
 	end
-	return "Убрал год-мод: " .. namesOf(targets)
+	return "РЈР±СЂР°Р» РіРѕРґ-РјРѕРґ: " .. namesOf(targets)
 end)
 
-register({ "speed", "ws", "спид" }, "<игрок> <число>", "WalkSpeed (обычный = 16)", function(sender, args)
+register({ "speed", "ws", "СЃРїРёРґ" }, "<РёРіСЂРѕРє> <С‡РёСЃР»Рѕ>", "WalkSpeed (РѕР±С‹С‡РЅС‹Р№ = 16)", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
-	local value = tonumber(args[2])
+	local value = parseNumber(args[2], 0, 500)
 	if not value then
-		return nil, "Использование: speed <игрок> <число>"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: speed <РёРіСЂРѕРє> <С‡РёСЃР»Рѕ 0-500>"
 	end
 	for _, p in ipairs(targets) do
 		local _, humanoid = getCharParts(p)
@@ -571,17 +725,17 @@ register({ "speed", "ws", "спид" }, "<игрок> <число>", "WalkSpeed (обычный = 16)
 			humanoid.WalkSpeed = value
 		end
 	end
-	return ("Скорость %g: %s"):format(value, namesOf(targets))
+	return ("РЎРєРѕСЂРѕСЃС‚СЊ %g: %s"):format(value, namesOf(targets))
 end)
 
-register({ "jump", "jp" }, "<игрок> <число>", "JumpPower (обычный = 50)", function(sender, args)
+register({ "jump", "jp" }, "<РёРіСЂРѕРє> <С‡РёСЃР»Рѕ>", "JumpPower (РѕР±С‹С‡РЅС‹Р№ = 50)", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
-	local value = tonumber(args[2])
+	local value = parseNumber(args[2], 0, 500)
 	if not value then
-		return nil, "Использование: jump <игрок> <число>"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: jump <РёРіСЂРѕРє> <С‡РёСЃР»Рѕ 0-500>"
 	end
 	for _, p in ipairs(targets) do
 		local _, humanoid = getCharParts(p)
@@ -590,7 +744,7 @@ register({ "jump", "jp" }, "<игрок> <число>", "JumpPower (обычный = 50)", functi
 			humanoid.JumpPower = value
 		end
 	end
-	return ("Прыжок %g: %s"):format(value, namesOf(targets))
+	return ("РџСЂС‹Р¶РѕРє %g: %s"):format(value, namesOf(targets))
 end)
 
 local function teleportTo(player, cframe)
@@ -604,21 +758,21 @@ local function teleportTo(player, cframe)
 	return true
 end
 
-register({ "tp", "тп" }, "<кого> <к кому>", "телепорт игрока к игроку", function(sender, args)
+register({ "tp", "С‚Рї" }, "<РєРѕРіРѕ> <Рє РєРѕРјСѓ>", "С‚РµР»РµРїРѕСЂС‚ РёРіСЂРѕРєР° Рє РёРіСЂРѕРєСѓ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
 	local dest, err2 = resolveTargets(sender, args[2])
 	if not dest then
-		return nil, err2 or "Укажи, к кому телепортировать"
+		return nil, err2 or "РЈРєР°Р¶Рё, Рє РєРѕРјСѓ С‚РµР»РµРїРѕСЂС‚РёСЂРѕРІР°С‚СЊ"
 	end
 	if #dest ~= 1 then
-		return nil, "Второй аргумент должен быть ОДНИМ игроком"
+		return nil, "Р’С‚РѕСЂРѕР№ Р°СЂРіСѓРјРµРЅС‚ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РћР”РќРРњ РёРіСЂРѕРєРѕРј"
 	end
 	local _, _, destRoot = getCharParts(dest[1])
 	if not destRoot then
-		return nil, "У цели нет персонажа"
+		return nil, "РЈ С†РµР»Рё РЅРµС‚ РїРµСЂСЃРѕРЅР°Р¶Р°"
 	end
 	local count = 0
 	for i, p in ipairs(targets) do
@@ -627,35 +781,35 @@ register({ "tp", "тп" }, "<кого> <к кому>", "телепорт игрока к игроку", function
 			count += 1
 		end
 	end
-	return ("Телепортировал %d к %s"):format(count, dest[1].Name)
+	return ("РўРµР»РµРїРѕСЂС‚РёСЂРѕРІР°Р» %d Рє %s"):format(count, dest[1].Name)
 end)
 
-register({ "goto", "to", "гото" }, "<игрок>", "телепорт себя к игроку", function(sender, args)
+register({ "goto", "to", "РіРѕС‚Рѕ" }, "<РёРіСЂРѕРє>", "С‚РµР»РµРїРѕСЂС‚ СЃРµР±СЏ Рє РёРіСЂРѕРєСѓ", function(sender, args)
 	local dest, err = resolveTargets(sender, args[1])
 	if not dest then
 		return nil, err
 	end
 	if #dest ~= 1 then
-		return nil, "Укажи одного игрока"
+		return nil, "РЈРєР°Р¶Рё РѕРґРЅРѕРіРѕ РёРіСЂРѕРєР°"
 	end
 	local _, _, destRoot = getCharParts(dest[1])
 	if not destRoot then
-		return nil, "У цели нет персонажа"
+		return nil, "РЈ С†РµР»Рё РЅРµС‚ РїРµСЂСЃРѕРЅР°Р¶Р°"
 	end
 	if not teleportTo(sender, destRoot.CFrame + destRoot.CFrame.LookVector * 3) then
-		return nil, "У тебя нет персонажа"
+		return nil, "РЈ С‚РµР±СЏ РЅРµС‚ РїРµСЂСЃРѕРЅР°Р¶Р°"
 	end
-	return "Ты у " .. dest[1].Name
+	return "РўС‹ Сѓ " .. dest[1].Name
 end)
 
-register({ "bring", "бринг" }, "<игрок>", "телепорт игрока к себе", function(sender, args)
+register({ "bring", "Р±СЂРёРЅРі" }, "<РёРіСЂРѕРє>", "С‚РµР»РµРїРѕСЂС‚ РёРіСЂРѕРєР° Рє СЃРµР±Рµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
 	end
 	local _, _, myRoot = getCharParts(sender)
 	if not myRoot then
-		return nil, "У тебя нет персонажа"
+		return nil, "РЈ С‚РµР±СЏ РЅРµС‚ РїРµСЂСЃРѕРЅР°Р¶Р°"
 	end
 	local count = 0
 	for i, p in ipairs(targets) do
@@ -666,10 +820,10 @@ register({ "bring", "бринг" }, "<игрок>", "телепорт игрока к себе", function(sen
 			end
 		end
 	end
-	return ("Притащил: %d"):format(count)
+	return ("РџСЂРёС‚Р°С‰РёР»: %d"):format(count)
 end)
 
-register({ "respawn", "re", "рес" }, "<игрок>", "переспавнить", function(sender, args)
+register({ "respawn", "re", "СЂРµСЃ" }, "<РёРіСЂРѕРє>", "РїРµСЂРµСЃРїР°РІРЅРёС‚СЊ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then
 		return nil, err
@@ -677,11 +831,11 @@ register({ "respawn", "re", "рес" }, "<игрок>", "переспавнить", function(sender,
 	for _, p in ipairs(targets) do
 		pcall(p.LoadCharacter, p)
 	end
-	return "Респавн: " .. namesOf(targets)
+	return "Р РµСЃРїР°РІРЅ: " .. namesOf(targets)
 end)
 
-register({ "freeze", "фриз" }, "<игрок>", "заморозить (заякорить)", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
+register({ "freeze", "С„СЂРёР·" }, "<РёРіСЂРѕРє>", "Р·Р°РјРѕСЂРѕР·РёС‚СЊ (Р·Р°СЏРєРѕСЂРёС‚СЊ)", function(sender, args)
+	local targets, err = resolveTargets(sender, args[1], true)
 	if not targets then
 		return nil, err
 	end
@@ -691,10 +845,10 @@ register({ "freeze", "фриз" }, "<игрок>", "заморозить (заякорить)", function(sen
 			root.Anchored = true
 		end
 	end
-	return "Заморозил: " .. namesOf(targets)
+	return "Р—Р°РјРѕСЂРѕР·РёР»: " .. namesOf(targets)
 end)
 
-register({ "thaw", "unfreeze", "анфриз" }, "<игрок>", "разморозить", function(sender, args)
+register({ "thaw", "unfreeze", "Р°РЅС„СЂРёР·" }, "<РёРіСЂРѕРє>", "СЂР°Р·РјРѕСЂРѕР·РёС‚СЊ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then
 		return nil, err
@@ -705,14 +859,17 @@ register({ "thaw", "unfreeze", "анфриз" }, "<игрок>", "разморозить", function(se
 			root.Anchored = false
 		end
 	end
-	return "Разморозил: " .. namesOf(targets)
+	return "Р Р°Р·РјРѕСЂРѕР·РёР»: " .. namesOf(targets)
 end)
 
 local function setAdminEffect(targets, className, enabled)
 	for _, player in ipairs(targets) do
 		local _, humanoid, root = getCharParts(player)
 		if className == "Sit" then
-			if humanoid then humanoid.Sit = enabled end
+			if humanoid then
+				humanoid.Sit = enabled
+				if not enabled then humanoid.Jump = true end
+			end
 		elseif root then
 			local effectName = "Admin" .. className
 			local existing = root:FindFirstChild(effectName)
@@ -735,46 +892,46 @@ local function setAdminEffect(targets, className, enabled)
 	end
 end
 
-register({ "sit", "сесть" }, "<игрок>", "посадить игрока", function(sender, args)
+register({ "sit", "СЃРµСЃС‚СЊ" }, "<РёРіСЂРѕРє>", "РїРѕСЃР°РґРёС‚СЊ РёРіСЂРѕРєР°", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Sit", true)
-	return "Посадил: " .. namesOf(targets)
+	return "РџРѕСЃР°РґРёР»: " .. namesOf(targets)
 end)
 
-register({ "unsit", "встать" }, "<игрок>", "поднять игрока", function(sender, args)
+register({ "unsit", "РІСЃС‚Р°С‚СЊ" }, "<РёРіСЂРѕРє>", "РїРѕРґРЅСЏС‚СЊ РёРіСЂРѕРєР°", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Sit", false)
-	return "Поднял: " .. namesOf(targets)
+	return "РџРѕРґРЅСЏР»: " .. namesOf(targets)
 end)
 
-register({ "sparkles", "искры" }, "<игрок>", "добавить голубые искры", function(sender, args)
+register({ "sparkles", "РёСЃРєСЂС‹" }, "<РёРіСЂРѕРє>", "РґРѕР±Р°РІРёС‚СЊ РіРѕР»СѓР±С‹Рµ РёСЃРєСЂС‹", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Sparkles", true)
-	return "Добавил искры: " .. namesOf(targets)
+	return "Р”РѕР±Р°РІРёР» РёСЃРєСЂС‹: " .. namesOf(targets)
 end)
 
-register({ "unsparkles", "убратьискры" }, "<игрок>", "убрать искры", function(sender, args)
+register({ "unsparkles", "СѓР±СЂР°С‚СЊРёСЃРєСЂС‹" }, "<РёРіСЂРѕРє>", "СѓР±СЂР°С‚СЊ РёСЃРєСЂС‹", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Sparkles", false)
-	return "Убрал искры: " .. namesOf(targets)
+	return "РЈР±СЂР°Р» РёСЃРєСЂС‹: " .. namesOf(targets)
 end)
 
-register({ "fire", "огонь" }, "<игрок>", "добавить декоративный огонь", function(sender, args)
+register({ "fire", "РѕРіРѕРЅСЊ" }, "<РёРіСЂРѕРє>", "РґРѕР±Р°РІРёС‚СЊ РґРµРєРѕСЂР°С‚РёРІРЅС‹Р№ РѕРіРѕРЅСЊ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Fire", true)
-	return "Добавил огонь: " .. namesOf(targets)
+	return "Р”РѕР±Р°РІРёР» РѕРіРѕРЅСЊ: " .. namesOf(targets)
 end)
 
-register({ "unfire", "убратьогонь" }, "<игрок>", "убрать огонь", function(sender, args)
+register({ "unfire", "СѓР±СЂР°С‚СЊРѕРіРѕРЅСЊ" }, "<РёРіСЂРѕРє>", "СѓР±СЂР°С‚СЊ РѕРіРѕРЅСЊ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
 	setAdminEffect(targets, "Fire", false)
-	return "Убрал огонь: " .. namesOf(targets)
+	return "РЈР±СЂР°Р» РѕРіРѕРЅСЊ: " .. namesOf(targets)
 end)
 
 local function setDeveloperRainbow(targets, enabled)
@@ -805,21 +962,21 @@ local function setDeveloperRainbow(targets, enabled)
 	end
 end
 
-register({ "rainbow", "радуга" }, "<игрок>", "радужное свечение (разработчик)", function(sender, args)
+register({ "rainbow", "СЂР°РґСѓРіР°" }, "<РёРіСЂРѕРє>", "СЂР°РґСѓР¶РЅРѕРµ СЃРІРµС‡РµРЅРёРµ (СЂР°Р·СЂР°Р±РѕС‚С‡РёРє)", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then return nil, err end
 	setDeveloperRainbow(targets, true)
-	return "Радуга вкл: " .. namesOf(targets)
+	return "Р Р°РґСѓРіР° РІРєР»: " .. namesOf(targets)
 end)
 
-register({ "unrainbow", "убратьрадугу" }, "<игрок>", "убрать радужное свечение", function(sender, args)
+register({ "unrainbow", "СѓР±СЂР°С‚СЊСЂР°РґСѓРіСѓ" }, "<РёРіСЂРѕРє>", "СѓР±СЂР°С‚СЊ СЂР°РґСѓР¶РЅРѕРµ СЃРІРµС‡РµРЅРёРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then return nil, err end
 	setDeveloperRainbow(targets, false)
-	return "Радуга выкл: " .. namesOf(targets)
+	return "Р Р°РґСѓРіР° РІС‹РєР»: " .. namesOf(targets)
 end)
 
-register({ "spin", "крутить" }, "<игрок>", "крутить персонажа (разработчик)", function(sender, args)
+register({ "spin", "РєСЂСѓС‚РёС‚СЊ" }, "<РёРіСЂРѕРє>", "РєСЂСѓС‚РёС‚СЊ РїРµСЂСЃРѕРЅР°Р¶Р° (СЂР°Р·СЂР°Р±РѕС‚С‡РёРє)", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then return nil, err end
 	for _, target in ipairs(targets) do
@@ -833,10 +990,10 @@ register({ "spin", "крутить" }, "<игрок>", "крутить персонажа (разработчик)", fu
 			spin.Parent = root
 		end
 	end
-	return "Вращение вкл: " .. namesOf(targets)
+	return "Р’СЂР°С‰РµРЅРёРµ РІРєР»: " .. namesOf(targets)
 end)
 
-register({ "unspin", "не крутить" }, "<игрок>", "остановить вращение", function(sender, args)
+register({ "unspin", "РЅРµ РєСЂСѓС‚РёС‚СЊ" }, "<РёРіСЂРѕРє>", "РѕСЃС‚Р°РЅРѕРІРёС‚СЊ РІСЂР°С‰РµРЅРёРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then return nil, err end
 	for _, target in ipairs(targets) do
@@ -844,13 +1001,13 @@ register({ "unspin", "не крутить" }, "<игрок>", "остановить вращение", function(
 		local spin = root and root:FindFirstChild("DeveloperSpin")
 		if spin then spin:Destroy() end
 	end
-	return "Вращение выкл: " .. namesOf(targets)
+	return "Р’СЂР°С‰РµРЅРёРµ РІС‹РєР»: " .. namesOf(targets)
 end)
 
-register({ "fly", "флай" }, "[игрок] [скорость]", "полёт (по умолчанию себе)", function(sender, args)
-	local targetToken, speed = args[1], tonumber(args[2])
-	if targetToken and tonumber(targetToken) then
-		speed = tonumber(targetToken)
+register({ "fly", "С„Р»Р°Р№" }, "[РёРіСЂРѕРє] [СЃРєРѕСЂРѕСЃС‚СЊ]", "РїРѕР»С‘С‚ (РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ СЃРµР±Рµ)", function(sender, args)
+	local targetToken, speed = args[1], parseNumber(args[2], 1, 500)
+	if targetToken and parseNumber(targetToken, 1, 500) then
+		speed = parseNumber(targetToken, 1, 500)
 		targetToken = "me"
 	end
 	local targets, err = resolveTargets(sender, targetToken or "me")
@@ -860,10 +1017,10 @@ register({ "fly", "флай" }, "[игрок] [скорость]", "полёт (по умолчанию себе)", f
 	for _, p in ipairs(targets) do
 		setMode(p, "fly", true, speed or CONFIG.DefaultFlySpeed)
 	end
-	return "Полёт вкл: " .. namesOf(targets)
+	return "РџРѕР»С‘С‚ РІРєР»: " .. namesOf(targets)
 end)
 
-register({ "unfly", "анфлай" }, "[игрок]", "выключить полёт", function(sender, args)
+register({ "unfly", "Р°РЅС„Р»Р°Р№" }, "[РёРіСЂРѕРє]", "РІС‹РєР»СЋС‡РёС‚СЊ РїРѕР»С‘С‚", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then
 		return nil, err
@@ -871,10 +1028,10 @@ register({ "unfly", "анфлай" }, "[игрок]", "выключить полёт", function(sender, a
 	for _, p in ipairs(targets) do
 		setMode(p, "fly", false)
 	end
-	return "Полёт выкл: " .. namesOf(targets)
+	return "РџРѕР»С‘С‚ РІС‹РєР»: " .. namesOf(targets)
 end)
 
-register({ "noclip", "ноуклип" }, "[игрок]", "проход сквозь стены", function(sender, args)
+register({ "noclip", "РЅРѕСѓРєР»РёРї" }, "[РёРіСЂРѕРє]", "РїСЂРѕС…РѕРґ СЃРєРІРѕР·СЊ СЃС‚РµРЅС‹", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then
 		return nil, err
@@ -882,10 +1039,10 @@ register({ "noclip", "ноуклип" }, "[игрок]", "проход сквозь стены", function(sen
 	for _, p in ipairs(targets) do
 		setMode(p, "noclip", true)
 	end
-	return "Ноуклип вкл: " .. namesOf(targets)
+	return "РќРѕСѓРєР»РёРї РІРєР»: " .. namesOf(targets)
 end)
 
-register({ "clip", "клип" }, "[игрок]", "выключить ноуклип", function(sender, args)
+register({ "clip", "РєР»РёРї" }, "[РёРіСЂРѕРє]", "РІС‹РєР»СЋС‡РёС‚СЊ РЅРѕСѓРєР»РёРї", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then
 		return nil, err
@@ -893,7 +1050,7 @@ register({ "clip", "клип" }, "[игрок]", "выключить ноуклип", function(sender, ar
 	for _, p in ipairs(targets) do
 		setMode(p, "noclip", false)
 	end
-	return "Ноуклип выкл: " .. namesOf(targets)
+	return "РќРѕСѓРєР»РёРї РІС‹РєР»: " .. namesOf(targets)
 end)
 
 local function getCoinApi()
@@ -906,81 +1063,60 @@ local function changeCoins(sender, args, action, verb)
 	if not targets then
 		return nil, err
 	end
-	local amount = tonumber(args[2])
-	if not amount or amount < 0 then
-		return nil, ("Использование: %s <игрок> <количество>"):format(verb)
+	local amount = parseNumber(args[2], 0, CONFIG.MaxCoins)
+	if not amount or args[2]:sub(1, 1) == "-" then
+		return nil, ("РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: %s <РёРіСЂРѕРє> <РєРѕР»РёС‡РµСЃС‚РІРѕ>"):format(verb)
 	end
 	amount = math.floor(amount)
 	local api = getCoinApi()
 	if not api then
-		return nil, "Система монет ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° РјРѕРЅРµС‚ РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
 	end
 	for _, target in ipairs(targets) do
 		local ok, success, message = pcall(api.Invoke, api, action, target, amount)
 		if not ok or not success then
-			return nil, message or "Не удалось изменить монеты"
+			return nil, type(message) == "string" and message or "РќРµ СѓРґР°Р»РѕСЃСЊ РёР·РјРµРЅРёС‚СЊ РјРѕРЅРµС‚С‹"
 		end
 	end
-	return ("%s %d монет: %s"):format(verb, amount, namesOf(targets))
+	return ("%s %d РјРѕРЅРµС‚: %s"):format(verb, amount, namesOf(targets))
 end
 
-register({ "givecoins", "addcoins", "датьмонеты" }, "<игрок> <количество>", "выдать монеты", function(sender, args)
-	return changeCoins(sender, args, "add", "Выдано")
+register({ "givecoins", "addcoins", "РґР°С‚СЊРјРѕРЅРµС‚С‹" }, "<РёРіСЂРѕРє> <РєРѕР»РёС‡РµСЃС‚РІРѕ>", "РІС‹РґР°С‚СЊ РјРѕРЅРµС‚С‹", function(sender, args)
+	return changeCoins(sender, args, "add", "Р’С‹РґР°РЅРѕ")
 end)
 
-register({ "takecoins", "removecoins", "забратьмонеты" }, "<игрок> <количество>", "забрать монеты", function(sender, args)
-	return changeCoins(sender, args, "take", "Забрано")
+register({ "takecoins", "removecoins", "Р·Р°Р±СЂР°С‚СЊРјРѕРЅРµС‚С‹" }, "<РёРіСЂРѕРє> <РєРѕР»РёС‡РµСЃС‚РІРѕ>", "Р·Р°Р±СЂР°С‚СЊ РјРѕРЅРµС‚С‹", function(sender, args)
+	return changeCoins(sender, args, "take", "Р—Р°Р±СЂР°РЅРѕ")
 end)
 
-register({ "setcoins", "монеты" }, "<игрок> <количество>", "установить баланс монет", function(sender, args)
-	return changeCoins(sender, args, "set", "Установлено")
+register({ "setcoins", "РјРѕРЅРµС‚С‹" }, "<РёРіСЂРѕРє> <РєРѕР»РёС‡РµСЃС‚РІРѕ>", "СѓСЃС‚Р°РЅРѕРІРёС‚СЊ Р±Р°Р»Р°РЅСЃ РјРѕРЅРµС‚", function(sender, args)
+	return changeCoins(sender, args, "set", "РЈСЃС‚Р°РЅРѕРІР»РµРЅРѕ")
 end)
 
-register({ "balance", "coins" }, "[игрок]", "показать баланс монет", function(sender, args)
+register({ "balance", "coins" }, "[РёРіСЂРѕРє]", "РїРѕРєР°Р·Р°С‚СЊ Р±Р°Р»Р°РЅСЃ РјРѕРЅРµС‚", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1] or "me")
 	if not targets then
 		return nil, err
 	end
 	local api = getCoinApi()
 	if not api then
-		return nil, "Система монет ещё не готова"
+		return nil, "РЎРёСЃС‚РµРјР° РјРѕРЅРµС‚ РµС‰С‘ РЅРµ РіРѕС‚РѕРІР°"
 	end
 	local result = {}
 	for _, target in ipairs(targets) do
 		local ok, success, value = pcall(api.Invoke, api, "get", target)
-		if ok and success then
+		if ok and success and type(value) == "number" then
 			table.insert(result, ("%s: %d"):format(target.Name, value))
 		end
 	end
 	return table.concat(result, " | ")
 end)
 
-register({ "sit", "сесть" }, "<игрок>", "посадить персонажа", function(sender, args)
+register({ "health", "hp" }, "<РёРіСЂРѕРє> <С‡РёСЃР»Рѕ>", "СѓСЃС‚Р°РЅРѕРІРёС‚СЊ Р·РґРѕСЂРѕРІСЊРµ", function(sender, args)
 	local targets, err = resolveTargets(sender, args[1])
 	if not targets then return nil, err end
-	for _, target in ipairs(targets) do
-		local _, humanoid = getCharParts(target)
-		if humanoid then humanoid.Sit = true end
-	end
-	return "Посадил: " .. namesOf(targets)
-end)
-
-register({ "unsit", "встать" }, "<игрок>", "поднять персонажа", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
-	if not targets then return nil, err end
-	for _, target in ipairs(targets) do
-		local _, humanoid = getCharParts(target)
-		if humanoid then humanoid.Sit = false; humanoid.Jump = true end
-	end
-	return "Поднял: " .. namesOf(targets)
-end)
-
-register({ "health", "hp" }, "<игрок> <число>", "установить здоровье", function(sender, args)
-	local targets, err = resolveTargets(sender, args[1])
-	if not targets then return nil, err end
-	local value = tonumber(args[2])
-	if not value then return nil, "Использование: health <игрок> <число>" end
-	value = math.clamp(value, 0, 1000000)
+	local value = parseNumber(args[2], 0, 1000000)
+	if not value then return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: health <РёРіСЂРѕРє> <С‡РёСЃР»Рѕ>" end
 	for _, target in ipairs(targets) do
 		local _, humanoid = getCharParts(target)
 		if humanoid then
@@ -988,66 +1124,86 @@ register({ "health", "hp" }, "<игрок> <число>", "установить здоровье", function(
 			humanoid.Health = value
 		end
 	end
-	return ("Здоровье %g: %s"):format(value, namesOf(targets))
+	return ("Р—РґРѕСЂРѕРІСЊРµ %g: %s"):format(value, namesOf(targets))
 end)
 
-register({ "announce", "m", "объявление" }, "<текст>", "объявление всем игрокам", function(sender, args)
+register({ "announce", "m", "РѕР±СЉСЏРІР»РµРЅРёРµ" }, "<С‚РµРєСЃС‚>", "РѕР±СЉСЏРІР»РµРЅРёРµ РІСЃРµРј РёРіСЂРѕРєР°Рј", function(sender, args)
 	local text = table.concat(args, " ")
 	if text == "" then
-		return nil, "Использование: announce <текст>"
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: announce <С‚РµРєСЃС‚>"
 	end
-	annRemote:FireAllClients(text, CONFIG.AnnounceTime)
-	return "Объявление отправлено"
+	local filtered = filterText(sender, text)
+	if not filtered then
+		return nil, "РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРѕРІРµСЂРёС‚СЊ С‚РµРєСЃС‚ С„РёР»СЊС‚СЂРѕРј, РїРѕРїСЂРѕР±СѓР№ РїРѕР·Р¶Рµ"
+	end
+	annRemote:FireAllClients(filtered, CONFIG.AnnounceTime)
+	return "РћР±СЉСЏРІР»РµРЅРёРµ РѕС‚РїСЂР°РІР»РµРЅРѕ"
 end)
 
-register({ "require", "rq" }, "<assetId>", "загрузить модуль на сервере (ТОЛЬКО доверенные!)", function(sender, args)
-	local id = tonumber(args[1])
-	if not id then
-		return nil, "Использование: require <assetId модуля>"
+register({ "require", "rq" }, "<assetId>", "Р·Р°РіСЂСѓР·РёС‚СЊ РјРѕРґСѓР»СЊ РЅР° СЃРµСЂРІРµСЂРµ (РўРћР›Р¬РљРћ РґРѕРІРµСЂРµРЅРЅС‹Рµ!)", function(sender, args)
+	if not CONFIG.AllowRequireCommand then
+		return nil, "РљРѕРјР°РЅРґР° require РѕС‚РєР»СЋС‡РµРЅР° (CONFIG.AllowRequireCommand = false)"
 	end
+	if getLevel(sender) < LEVEL_TRUSTED then
+		return nil, "require РґРѕСЃС‚СѓРїРµРЅ С‚РѕР»СЊРєРѕ РІР»Р°РґРµР»СЊС†Сѓ Рё Р°РґРјРёРЅР°Рј РёР· CONFIG.Admins"
+	end
+	local token = args[1]
+	local id = token and token:match("^%d+$") and #token <= 15 and tonumber(token)
+	if not id or id <= 0 then
+		return nil, "РСЃРїРѕР»СЊР·РѕРІР°РЅРёРµ: require <assetId РјРѕРґСѓР»СЏ>"
+	end
+	warn(("[AdminConsole] %s (%d) РІС‹РїРѕР»РЅСЏРµС‚ require(%d)"):format(sender.Name, sender.UserId, id))
 	local ok, result = pcall(require, id)
 	if not ok then
-		return nil, "require не удался: " .. tostring(result)
+		return nil, "require РЅРµ СѓРґР°Р»СЃСЏ: " .. tostring(result)
 	end
 	if type(result) == "function" then
 		local ok2, err2 = pcall(result)
 		if not ok2 then
-			return nil, "Модуль загружен, но при вызове упал: " .. tostring(err2)
+			return nil, "РњРѕРґСѓР»СЊ Р·Р°РіСЂСѓР¶РµРЅ, РЅРѕ РїСЂРё РІС‹Р·РѕРІРµ СѓРїР°Р»: " .. tostring(err2)
 		end
-		return ("Модуль %d загружен и вызван"):format(id)
+		return ("РњРѕРґСѓР»СЊ %d Р·Р°РіСЂСѓР¶РµРЅ Рё РІС‹Р·РІР°РЅ"):format(id)
 	end
-	return ("Модуль %d загружен (вернул %s)"):format(id, typeof(result))
+	return ("РњРѕРґСѓР»СЊ %d Р·Р°РіСЂСѓР¶РµРЅ (РІРµСЂРЅСѓР» %s)"):format(id, typeof(result))
 end)
 
-register({ "shutdown", "шатдаун" }, "[причина]", "кикнуть всех (перезапуск сервера)", function(sender, args)
+register({ "shutdown", "С€Р°С‚РґР°СѓРЅ" }, "[РїСЂРёС‡РёРЅР°]", "РєРёРєРЅСѓС‚СЊ РІСЃРµС… (РїРµСЂРµР·Р°РїСѓСЃРє СЃРµСЂРІРµСЂР°)", function(sender, args)
 	local reason = table.concat(args, " ")
 	if reason == "" then
-		reason = "Сервер перезапускается"
+		reason = "РЎРµСЂРІРµСЂ РїРµСЂРµР·Р°РїСѓСЃРєР°РµС‚СЃСЏ"
+	else
+		reason = filterText(sender, reason, "РЎРµСЂРІРµСЂ РїРµСЂРµР·Р°РїСѓСЃРєР°РµС‚СЃСЏ")
 	end
 	for _, p in ipairs(Players:GetPlayers()) do
 		pcall(p.Kick, p, reason)
 	end
-	return "Сервер очищен"
+	return "РЎРµСЂРІРµСЂ РѕС‡РёС‰РµРЅ"
 end)
 
 --------------------------------------------------------------------------------
--- Приём команд
+-- РџСЂРёС‘Рј РєРѕРјР°РЅРґ
 --------------------------------------------------------------------------------
 
+local busy = {} -- [player] = true, РїРѕРєР° РІС‹РїРѕР»РЅСЏРµС‚СЃСЏ РєРѕРјР°РЅРґР° (Р·Р°С‰РёС‚Р° РѕС‚ РЅР°Р»РѕР¶РµРЅРёСЏ yield-РєРѕРјР°РЅРґ)
+
 cmdRemote.OnServerEvent:Connect(function(player, text)
+	if type(text) ~= "string" or not allowRequest(player) then
+		return
+	end
 	if not isAdmin(player) then
-		warn(("[AdminConsole] НЕ-админ %s (%d) пытался выполнить: %s"):format(player.Name, player.UserId, tostring(text)))
+		warn(("[AdminConsole] РќР•-Р°РґРјРёРЅ %s (%d) РїС‹С‚Р°Р»СЃСЏ РІС‹РїРѕР»РЅРёС‚СЊ РєРѕРјР°РЅРґСѓ"):format(player.Name, player.UserId))
 		return
 	end
-	if type(text) ~= "string" then
+	if busy[player] or #text > CONFIG.MaxInputLength * 4 or not utf8.len(text) then
 		return
 	end
+	text = clip(text, CONFIG.MaxInputLength)
 	text = text:gsub("^%s+", ""):gsub("%s+$", "")
 	if text == "" then
 		return
 	end
 
-	print(("[AdminConsole] %s: %s"):format(player.Name, text)) -- аудит-лог в консоль сервера
+	print(("[AdminConsole] %s: %s"):format(player.Name, text)) -- Р°СѓРґРёС‚-Р»РѕРі РІ РєРѕРЅСЃРѕР»СЊ СЃРµСЂРІРµСЂР°
 
 	local args = {}
 	for word in text:gmatch("%S+") do
@@ -1057,13 +1213,16 @@ cmdRemote.OnServerEvent:Connect(function(player, text)
 
 	local cmd = Commands[cmdName]
 	if not cmd then
-		reply(player, ("Неизвестная команда «%s». Введи help"):format(cmdName), "err")
+		reply(player, ("РќРµРёР·РІРµСЃС‚РЅР°СЏ РєРѕРјР°РЅРґР° В«%sВ». Р’РІРµРґРё help"):format(clip(cmdName, 32)), "err")
 		return
 	end
 
+	busy[player] = true
 	local ok, r1, r2 = pcall(cmd.fn, player, args)
+	busy[player] = nil
 	if not ok then
-		reply(player, "Внутренняя ошибка: " .. tostring(r1), "err")
+		warn("[AdminConsole] РѕС€РёР±РєР° РєРѕРјР°РЅРґС‹ " .. cmd.name .. ": " .. tostring(r1))
+		reply(player, "Р’РЅСѓС‚СЂРµРЅРЅСЏСЏ РѕС€РёР±РєР° РєРѕРјР°РЅРґС‹ " .. cmd.name, "err")
 	elseif r1 == nil and r2 then
 		reply(player, r2, "err")
 	elseif type(r1) == "string" then
@@ -1073,12 +1232,15 @@ end)
 
 Players.PlayerRemoving:Connect(function(player)
 	adminCache[player] = nil
+	adminFailedAt[player] = nil
 	clientModes[player] = nil
+	buckets[player] = nil
+	busy[player] = nil
 end)
 
 Players.PlayerAdded:Connect(function(player)
-	task.defer(isAdmin, player)
+	task.defer(getLevel, player)
 end)
 for _, player in ipairs(Players:GetPlayers()) do
-	task.defer(isAdmin, player)
+	task.defer(getLevel, player)
 end
